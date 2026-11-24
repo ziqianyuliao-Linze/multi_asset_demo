@@ -1,0 +1,15 @@
+挑战杯1号模块：离线接口包（Python标准库，无需安装SDK；不调用DeepSeek）。
+
+放置方式：将 feature_builder.py 和 offline_test.py 复制到 multi_asset_demo 根目录，原有 main.py、input.json、decision_log.jsonl、deepseek_client.py、decision_input.json 一律不删除、不覆盖。
+另将2号原始Excel放进同一目录。
+
+命令（TRAE终端于项目根目录执行）：
+python feature_builder.py "2：统一口径日收益率矩阵(1).xlsx"
+python offline_test.py "2：统一口径日收益率矩阵(1).xlsx"
+
+生成：market_features.json、input_group_A/B/C/D.json、mock_decision_output.json、offline_test_report.json。
+说明：四组测试用的反馈数值是模拟数据，仅用于接口隔离验证；基础市场特征来自2号真实Excel。实际回测须由4号风险模块按各实验组的真实历史持仓和截止日期生成反馈，不能直接用示例数值。
+
+设计参数：250日年化系数sqrt(250)、收益为20/60日几何累计、波动为样本标准差、相关性60日Pearson。仅使用截至as_of_date的观测。B仅见组合收益，C增加组合整体风险及三项非集中度预警，D增加归因和集中度状态。
+
+注意：这不是完整回测，也没有实现4号的风险预算转资金权重求解器（solve_weights）。本包不配置或测试真实DeepSeek API；先进行接口验收。

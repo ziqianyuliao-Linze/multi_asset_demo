@@ -1,0 +1,3 @@
+{"timestamp": "2026-11-22T16:55:10.274183+00:00", "source": "mock", "status": "accepted", "weights": {"stock": 0.3, "bond": 0.5, "gold": 0.2}}
+{"timestamp": "2026-11-24T15:26:57.872234+00:00", "source": "mock", "status": "accepted", "weights": {"stock": 0.3, "bond": 0.5, "gold": 0.2}}
+{"timestamp": "2026-11-24T15:36:47.360191+00:00", "source": "mock", "status": "accepted", "weights": {"stock": 0.3, "bond": 0.5, "gold": 0.2}}

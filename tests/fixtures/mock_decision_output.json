@@ -1,0 +1,13 @@
+{
+  "as_of_date": "2026-11-20",
+  "decision_status": "ok",
+  "risk_budget": {
+    "510300": 0.4,
+    "511010": 0.4,
+    "518880": 0.2
+  },
+  "market_state": "risk_elevated",
+  "confidence": 0.8,
+  "decision_summary": "离线模拟，不是真实模型输出",
+  "failure_assumption": "模拟数据不具预测意义"
+}
