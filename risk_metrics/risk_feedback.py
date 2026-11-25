@@ -4,7 +4,11 @@ import math
 from datetime import date
 from statistics import mean, stdev
 
-from feature_builder import ASSETS, compound, corr
+from data_processing.feature_builder import (
+    ASSETS,
+    compound,
+    corr,
+)
 
 NAMES = ('stock', 'bond', 'gold')
 HOLDING_COLUMNS = ('as_of_date', 'group') + tuple('w_' + a for a in ASSETS) + tuple(

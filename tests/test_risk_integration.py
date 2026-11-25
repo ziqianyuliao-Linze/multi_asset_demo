@@ -12,14 +12,36 @@ import unittest
 from datetime import datetime
 from pathlib import Path
 
-from feature_builder import ASSETS, read_matrix, write_json
-from risk_feedback import (HOLDING_COLUMNS, NAMES, build_feedback, covariance,
-                           drawdown_attribution, historical_cvar, ledoit_wolf,
-                           portfolio_history, positive_definite, read_holdings,
-                           risk_contributions, solve_weights)
-from risk_integration import decision_to_weights, read_decisions, run_integration
+from data_processing.feature_builder import (
+    ASSETS,
+    read_matrix,
+    write_json,
+)
 
-ROOT = Path(__file__).resolve().parent
+from risk_metrics.risk_feedback import (
+    HOLDING_COLUMNS,
+    NAMES,
+    build_feedback,
+    closing_weights,
+    covariance,
+    covariance_at,
+    drawdown_attribution,
+    historical_cvar,
+    ledoit_wolf,
+    portfolio_history,
+    positive_definite,
+    read_holdings,
+    risk_contributions,
+    solve_weights,
+)
+
+from risk_metrics.risk_integration import (
+    decision_to_weights,
+    read_decisions,
+    run_integration,
+)
+
+ROOT = Path(__file__).resolve().parent.parent
 
 
 def make_fixture(records, target):
@@ -43,24 +65,33 @@ def make_fixture(records, target):
 
 
 class RiskIntegrationTests(unittest.TestCase):
+    matrix = ROOT / 'data' / 'unified_returns.xlsx'
+    report_output = None
+
     @classmethod
     def setUpClass(cls):
-        cls.records = read_matrix(MATRIX)
+        cls.output = cls.report_output
+        if cls.output is None:
+            temporary = tempfile.TemporaryDirectory(prefix='risk-integration-')
+            cls.addClassCleanup(temporary.cleanup)
+            cls.output = Path(temporary.name)
+
+        cls.records = read_matrix(cls.matrix)
         cls.day = cls.records[-1][0]
         cls.base = '2025-11-20'
-        cls.holdings_file = OUTPUT / 'synthetic_holdings.csv'
+        cls.holdings_file = cls.output / 'synthetic_holdings.csv'
         make_fixture(cls.records, cls.holdings_file)
         cls.groups = read_holdings(cls.holdings_file)
-        cls.decisions_file = OUTPUT / 'synthetic_decisions.json'
+        cls.decisions_file = cls.output / 'synthetic_decisions.json'
         decisions = {g: dict(as_of_date=cls.day, decision_status='ok',
                             risk_budget=dict(zip(ASSETS, [0.4, 0.4, 0.2])),
                             decision_summary='离线测试预算，未调用模型') for g in 'ABCD'}
         write_json(decisions, cls.decisions_file)
-        command = [sys.executable, '-B', '-E', '-S', '-X', 'utf8', str(ROOT / 'risk_integration.py'),
-                   str(MATRIX), '--holdings', str(cls.holdings_file), '--as-of', cls.day,
+        command = [sys.executable, '-B', '-E', '-S', '-X', 'utf8', '-m', 'risk_metrics.risk_integration',
+                   str(cls.matrix), '--holdings', str(cls.holdings_file), '--as-of', cls.day,
                    '--base-date', cls.base, '--decisions', str(cls.decisions_file),
-                   '--data-kind', 'synthetic_test', '--output-dir', str(OUTPUT / 'runs')]
-        result = subprocess.run(command, capture_output=True, text=True, encoding='utf-8')
+                   '--data-kind', 'synthetic_test', '--output-dir', str(cls.output / 'runs')]
+        result = subprocess.run(command, cwd=ROOT, capture_output=True, text=True, encoding='utf-8')
         if result.returncode:
             raise AssertionError(f'正常命令入口失败，{result.stderr}')
         cls.console = json.loads(result.stdout)
@@ -138,7 +169,6 @@ class RiskIntegrationTests(unittest.TestCase):
         current = feedback['risk_contribution']
         baseline, _ = build_feedback(self.records, self.groups['D'], self.base, 'C')
         self.assertTrue(math.isfinite(baseline['current_drawdown']))
-        from risk_feedback import covariance_at, closing_weights
         cov, _ = covariance_at(self.records, self.base)
         row = next(row for row in self.groups['D'] if row['date'] == self.base)
         old = risk_contributions(closing_weights(row, dict(self.records)[self.base]), cov)
@@ -166,7 +196,7 @@ class RiskIntegrationTests(unittest.TestCase):
             build_feedback(self.records, self.groups['C'][-250:], self.day, 'C')
 
     def test_csv_validation(self):
-        with tempfile.TemporaryDirectory(dir=OUTPUT) as directory:
+        with tempfile.TemporaryDirectory(dir=self.output) as directory:
             target = Path(directory) / 'bad.csv'
             for weights in ([0.2, 0.2, 0.2], [float('nan'), 0.5, 0.5], [-0.1, 0.5, 0.6]):
                 with target.open('w', newline='', encoding='utf-8') as stream:
@@ -229,7 +259,7 @@ class RiskIntegrationTests(unittest.TestCase):
         self.assertEqual(list(fallback['risk_budget'].values()), [1 / 3] * 3)
 
     def test_invalid_decision_and_no_partial_run(self):
-        with tempfile.TemporaryDirectory(dir=OUTPUT) as directory:
+        with tempfile.TemporaryDirectory(dir=self.output) as directory:
             bad = Path(directory) / 'bad.json'
             original = json.loads(self.decisions_file.read_text(encoding='utf-8'))
             for invalid in (True, float('inf'), -0.1, 0.3):
@@ -242,15 +272,15 @@ class RiskIntegrationTests(unittest.TestCase):
             write_json(original, bad)
             destination = Path(directory) / 'runs'
             with self.assertRaises(ValueError):
-                run_integration(MATRIX, self.holdings_file, self.day, self.base, destination, bad)
+                run_integration(self.matrix, self.holdings_file, self.day, self.base, destination, bad)
             self.assertFalse(destination.exists())
             bad.write_text('{"A":{},"A":{}}', encoding='utf-8')
             with self.assertRaisesRegex(ValueError, '重复'):
                 read_decisions(bad)
 
     def test_repeated_runs_get_separate_output(self):
-        destination, report = run_integration(MATRIX, self.holdings_file, self.day, self.base,
-                                              OUTPUT / 'runs', data_kind='synthetic_test')
+        destination, report = run_integration(self.matrix, self.holdings_file, self.day, self.base,
+                                              self.output / 'runs', data_kind='synthetic_test')
         self.assertNotEqual(destination, self.run_dir)
         self.assertTrue(self.run_dir.exists())
         self.assertFalse(report['decisions_supplied'])
@@ -259,20 +289,30 @@ class RiskIntegrationTests(unittest.TestCase):
 
 if __name__ == '__main__':
     if len(sys.argv) != 2:
-        raise SystemExit('用法 python test_risk_integration.py 收益率矩阵.xlsx')
-    MATRIX = Path(sys.argv[1]).resolve()
+        raise SystemExit('用法: python -m tests.test_risk_integration 收益率矩阵.xlsx')
+    matrix = Path(sys.argv[1]).resolve()
     parent = ROOT / 'risk_test_runs'
     parent.mkdir(exist_ok=True)
-    OUTPUT = Path(tempfile.mkdtemp(prefix='test-', dir=parent))
+    output = Path(tempfile.mkdtemp(prefix='test-', dir=parent))
+    RiskIntegrationTests.matrix = matrix
+    RiskIntegrationTests.report_output = output
     suite = unittest.defaultTestLoader.loadTestsFromTestCase(RiskIntegrationTests)
     result = unittest.TextTestRunner(verbosity=2).run(suite)
+    sources = (
+        ROOT / 'data_processing' / 'feature_builder.py',
+        ROOT / 'interfaces' / 'data_schema.py',
+        ROOT / 'interfaces' / 'risk_decision.py',
+        ROOT / 'risk_metrics' / 'risk_feedback.py',
+        ROOT / 'risk_metrics' / 'risk_integration.py',
+        Path(__file__),
+    )
     summary = dict(mode='synthetic_test', created_at=datetime.now().astimezone().isoformat(),
                    tests_run=result.testsRun, failures=len(result.failures), errors=len(result.errors),
                    passed=result.wasSuccessful(), api_called=False, real_holdings_validated=False,
-                   matrix_sha256=hashlib.sha256(MATRIX.read_bytes()).hexdigest(),
-                   source_sha256={name: hashlib.sha256((ROOT / name).read_bytes()).hexdigest()
-                                  for name in ('risk_feedback.py', 'risk_integration.py', 'test_risk_integration.py')},
-                   integration_report=str(getattr(RiskIntegrationTests, 'run_dir', OUTPUT) / 'integration_report.json'))
-    write_json(summary, OUTPUT / 'test_report.json')
-    print(json.dumps(dict(report_path=str(OUTPUT / 'test_report.json'), **summary), ensure_ascii=False, indent=2))
+                   matrix_sha256=hashlib.sha256(matrix.read_bytes()).hexdigest(),
+                   source_sha256={path.name: hashlib.sha256(path.read_bytes()).hexdigest()
+                                  for path in sources},
+                   integration_report=str(getattr(RiskIntegrationTests, 'run_dir', output) / 'integration_report.json'))
+    write_json(summary, output / 'test_report.json')
+    print(json.dumps(dict(report_path=str(output / 'test_report.json'), **summary), ensure_ascii=False, indent=2))
     raise SystemExit(0 if result.wasSuccessful() else 1)

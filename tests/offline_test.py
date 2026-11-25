@@ -1,53 +1,17 @@
 """离线验证 A/B/C/D 的反馈字段隔离、输出预算校验与保存；不调用API。"""
 import json
-import math
 import sys
 from pathlib import Path
-from feature_builder import ASSETS, build_features, read_matrix, write_json
+
+from data_processing.feature_builder import build_features, read_matrix, write_json
+from interfaces.risk_decision import build_group_input, validate_decision
 
 ROOT = Path(__file__).resolve().parent
-BASIC = ('as_of_date', 'assets', 'correlations_60d', 'market_data_quality')
-B_KEYS = ('portfolio_return',)
-C_KEYS = ('portfolio_volatility', 'current_drawdown', 'max_drawdown', 'cvar_95', 'trigger_flags')
-D_KEYS = ('risk_contribution', 'budget_deviation', 'drawdown_attribution',
-          'risk_change_attribution', 'concentration_state')
-
-
-def build_group_input(market, feedback, group):
-    if group not in 'ABCD' or len(group) != 1:
-        raise ValueError('组别必须是A/B/C/D')
-    result = {k: market[k] for k in BASIC}
-    keys = (() if group == 'A' else
-            B_KEYS if group == 'B' else
-            B_KEYS + C_KEYS if group == 'C' else
-            B_KEYS + C_KEYS + D_KEYS)
-    for key in keys:
-        if key not in feedback:
-            raise ValueError(f'{group}组缺少反馈字段: {key}')
-        result[key] = feedback[key]
-    if 'trigger_flags' in result:
-        result['trigger_flags'] = {k: result['trigger_flags'][k]
-                                   for k in ('drawdown', 'volatility', 'correlation')}
-    return result
-
-
-def validate_decision(result, expected_date):
-    if result.get('decision_status') != 'ok' or result.get('as_of_date') != expected_date:
-        raise ValueError('状态或日期不合法')
-    b = result.get('risk_budget')
-    if not isinstance(b, dict) or set(b) != set(ASSETS):
-        raise ValueError('资产字段不合法')
-    values = list(b.values())
-    if any(type(x) not in (int, float) or not math.isfinite(x) or x <= 0 or x >= 1 for x in values):
-        raise ValueError('风险预算非合法正数')
-    if abs(sum(values) - 1) > 1e-6:
-        raise ValueError('预算总和不为1')
-    return True
 
 
 def main():
     if len(sys.argv) < 2:
-        raise SystemExit('用法: python offline_test.py "2：统一口径日收益率矩阵(1).xlsx"')
+        raise SystemExit('用法: python -m tests.offline_test "2：统一口径日收益率矩阵(1).xlsx"')
     records = read_matrix(sys.argv[1])
     assert len(records) == 3236, f'预期3236，实得{len(records)}'
     market = build_features(records)
