@@ -65,6 +65,15 @@ def slice_as_of(df: pd.DataFrame, as_of_date: str) -> pd.DataFrame:
     return df.loc[:text]
 
 
+def _source_label(path=None) -> str:
+    """来源文件记录为仓库相对路径，保证示例与报告跨机器可复现（规范 4.3）。"""
+    source = Path(path) if path is not None else DEFAULT_MATRIX_PATH
+    try:
+        return source.resolve().relative_to(REPO_ROOT).as_posix()
+    except ValueError:
+        return str(source)
+
+
 def check_matrix(df: pd.DataFrame, path=None) -> dict:
     """数据质量检查报告（口径说明 3.4）。全部检查项应为 True。"""
     dates = list(df.index)
@@ -81,7 +90,7 @@ def check_matrix(df: pd.DataFrame, path=None) -> dict:
         "common_calendar": True,  # 冻结矩阵本身即三资产共同交易日交集
         "no_forward_fill": True,  # 本模块不做任何填充
         "source": {
-            "file": str(Path(path) if path is not None else DEFAULT_MATRIX_PATH),
+            "file": _source_label(path),
             "sheet": SHEET_NAME,
             "sha256_12": file_sha256_12(path),
         },

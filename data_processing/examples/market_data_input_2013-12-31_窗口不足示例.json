@@ -59,7 +59,7 @@
     "common_calendar": true,
     "no_forward_fill": true,
     "source": {
-      "file": "C:\\Users\\1\\Doubao\\projects\\multi_asset_demo\\data\\unified_returns.xlsx",
+      "file": "data/unified_returns.xlsx",
       "sheet": "日收益率矩阵",
       "sha256_12": "c8ae2dad3039"
     },

@@ -48,6 +48,10 @@ class TestLoaderAndQuality(unittest.TestCase):
                     "common_calendar", "no_forward_fill"):
             self.assertTrue(report[key], key)
 
+    def test_source_label_relative(self):
+        self.assertEqual(check_matrix(self.df)["source"]["file"],
+                         "data/unified_returns.xlsx")
+
     def test_bad_path_raises(self):
         with self.assertRaises(FileNotFoundError):
             load_unified_returns(ROOT / "data" / "not_exist.xlsx")

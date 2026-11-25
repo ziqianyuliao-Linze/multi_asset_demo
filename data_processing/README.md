@@ -13,7 +13,7 @@
 | `feature_builder.py` | 1号既有实现，原样保留（数值对照基准，未修改） |
 | `examples/` | 输入输出示例 JSON（含窗口不足示例） |
 | `TEST_REPORT.md` | 独立测试报告 |
-| `../tests/test_data_processing.py` | 独立测试（16 用例） |
+| `../tests/test_data_processing.py` | 独立测试（17 用例） |
 
 冻结数据版本：SHA-256 前12位 `c8ae2dad3039`，3236 行，2013-07-30 ~ 2026-11-20。本模块不下载行情、不改矩阵、不做任何填充。
 

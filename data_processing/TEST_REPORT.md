@@ -3,13 +3,13 @@
 日期：2026-11-25　负责人：2号 mdy　模块版本：v1.0
 环境：Python 3.12.11（云验证机）与 Python 3.13.18（负责人本机）双环境复跑；pandas / openpyxl 见根目录 requirements.txt。
 命令：仓库根目录 `python tests/test_data_processing.py`
-结果：**Ran 16 tests — OK（16/16 通过，0 失败 0 错误）**
+结果：**Ran 17 tests — OK（17/17 通过，0 失败 0 错误）**
 
 ## 用例覆盖
 
 | 组 | 用例 | 核验点 |
 |---|---|---|
-| TestLoaderAndQuality | 4 | 3236 行、2013-07-30~2026-11-20、列序 510300/511010/518880；SHA-256 前12位 c8ae2dad3039；质量七项全 True；坏路径抛 FileNotFoundError |
+| TestLoaderAndQuality | 5 | 3236 行、2013-07-30~2026-11-20、列序 510300/511010/518880；SHA-256 前12位 c8ae2dad3039；质量七项全 True；source.file 为仓库相对路径；坏路径抛 FileNotFoundError |
 | TestNoLookahead | 2 | 2024-06-28 全量计算与截断计算结果逐键相等；250 日窗口切片末行=as_of 且无未来日期 |
 | TestKnownValues | 4 | 2026-11-20 全部收益/波动/60d与250d相关矩阵用独立手工公式复算，误差 <1e-12；与1号 feature_builder 同日期数值一致 <1e-12；JSON 可 allow_nan=False 序列化 |
 | TestInsufficientWindow | 2 | 2013-12-31（104 观测）：20/60 可用、250 波动与 250 相关为 null 且 reason=insufficient_window；2013-08-30（<60）：60 日收益为 null |
