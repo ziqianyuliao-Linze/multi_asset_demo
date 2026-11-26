@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import math
+import re
 from datetime import datetime
 from pathlib import Path
 
@@ -19,10 +20,14 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_MATRIX_PATH = REPO_ROOT / "data" / "unified_returns.xlsx"
 
 
-def _validate_date_string(value: str) -> str:
-    text = str(value)[:10]
-    datetime.strptime(text, "%Y-%m-%d")
-    return text
+def _validate_date_string(value) -> str:
+    """严格只接受 YYYY-MM-DD 字符串；拒绝带时间/后缀/空白及其他类型。"""
+    if not isinstance(value, str):
+        raise ValueError(f"日期必须为 YYYY-MM-DD 字符串，实际类型 {type(value).__name__}")
+    if re.fullmatch(r"\d{4}-\d{2}-\d{2}", value) is None:
+        raise ValueError(f"日期格式必须严格为 YYYY-MM-DD：{value!r}")
+    datetime.strptime(value, "%Y-%m-%d")
+    return value
 
 
 def load_unified_returns(path=None) -> pd.DataFrame:

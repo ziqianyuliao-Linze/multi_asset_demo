@@ -3,7 +3,7 @@
 公开函数：
 - load_unified_returns(path=None)            冻结矩阵 DataFrame
 - get_returns_window(as_of, n=None, path=None)  截至 as_of 的最近 n 个共同交易日收益
-- get_market_data_input(as_of=None, path=None)  基础市场输入四字段（schema 形状）
+- get_market_data_input(as_of=省略, path=None)  基础市场输入四字段（方案A：资产键为证券代码；as_of 严格 YYYY-MM-DD）
 - get_trading_calendar(path=None)            共同交易日历
 - next_trading_day(date, path=None)          下一共同交易日（无则 None）
 - month_end_signal_dates(path=None)          各完整月份最后一个共同交易日（月末信号日）
@@ -14,7 +14,10 @@
 
 窗口不足语义：market_features / asset_correlations 中不足窗口字段为 null，
 data_quality.window_status 与 insufficient_windows 记录原因；
+零方差导致相关为 null 时同样记 sufficient=False（reason=zero_variance_asset）；
 消费方（1号/4号）必须先检查 data_quality 再使用数值，不得把 null 当 0。
+日期语义：as_of_date 严格只接受 YYYY-MM-DD 字符串，带时间/后缀/其他类型（含显式 None）一律 ValueError；
+省略该参数时默认取矩阵末日。
 """
 from __future__ import annotations
 
@@ -27,11 +30,11 @@ if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from data_processing.data_loader import (ASSET_CODES, DEFAULT_MATRIX_PATH,
-                                         check_matrix, load_unified_returns,
-                                         slice_as_of)
+                                         _validate_date_string, check_matrix,
+                                         load_unified_returns, slice_as_of)
 from data_processing.market_features import compute_market_features
 
-CODE_TO_NAME = {"510300": "stock", "511010": "bond", "518880": "gold"}
+_LATEST = object()  # 省略 as_of_date 时的内部哨兵；显式 None 视为非法输入
 
 
 def get_returns_window(as_of_date: str, n=None, path=None):
@@ -45,6 +48,7 @@ def get_trading_calendar(path=None) -> list:
 
 
 def next_trading_day(date_string: str, path=None):
+    date_string = _validate_date_string(date_string)
     dates = get_trading_calendar(path)
     later = [d for d in dates if d > date_string]
     return later[0] if later else None
@@ -68,18 +72,17 @@ def month_end_signal_dates(path=None) -> list:
     return signals
 
 
-def get_market_data_input(as_of_date=None, path=None) -> dict:
+def get_market_data_input(as_of_date=_LATEST, path=None) -> dict:
     """基础市场输入：as_of_date / market_features / asset_correlations / data_quality。"""
     source = Path(path) if path is not None else DEFAULT_MATRIX_PATH
     df = load_unified_returns(source)
-    as_of = as_of_date if as_of_date is not None else df.index[-1]
+    as_of = df.index[-1] if as_of_date is _LATEST else _validate_date_string(as_of_date)
     computed = compute_market_features(df, as_of)
     quality = check_matrix(df, source)
     quality.update({
         "as_of_date": as_of,
         "sample_days_to_date": computed["sample_days"],
         "no_lookahead": True,
-        "asset_code_mapping": CODE_TO_NAME,
         "window_status": computed["window_status"],
         "insufficient_windows": [k for k, v in computed["window_status"].items()
                                  if not v["sufficient"]],
@@ -98,7 +101,7 @@ def main():
     parser.add_argument("--path", default=None, help="冻结矩阵路径，默认 data/unified_returns.xlsx")
     parser.add_argument("--out", default=None, help="输出 JSON 路径")
     args = parser.parse_args()
-    payload = get_market_data_input(args.as_of, args.path)
+    payload = get_market_data_input(_LATEST if args.as_of is None else args.as_of, args.path)
     out = Path(args.out) if args.out else (
         Path(__file__).resolve().parent / "examples" /
         f"market_data_input_{payload['as_of_date']}.json")

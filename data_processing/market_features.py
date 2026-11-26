@@ -6,6 +6,9 @@
 - 全部计算严格截至 as_of_date，不使用未来收益。
 - 窗口观测不足时对应字段置 None，并在 window_status 记录 required/available/reason，
   不得把不足窗口伪装成完整窗口（口径说明 5.4）。
+- 零方差资产使相关系数为 null 时，该相关窗口记 sufficient=False、
+  reason=zero_variance_asset，并进入 insufficient_windows。
+- 公开输出资产键统一为证券代码（公共接口方案A）；stock/bond/gold 不进入输出。
 仅依赖标准库 math/statistics，数值口径与1号 feature_builder 保持一致。
 """
 from __future__ import annotations
@@ -57,13 +60,12 @@ def corr_matrix(series_by_code, window):
 def compute_market_features(df, as_of_date: str) -> dict:
     """返回 market_features / asset_correlations / window_status / sample_days。
 
-    market_features 内层键为 stock/bond/gold（interfaces/data_schema.py AssetValues）。
+    market_features 内层键统一为证券代码 510300/511010/518880（公共接口方案A）。
     asset_correlations 为 corr_60d / corr_250d 两个代码键 3x3 矩阵。
     """
     selected = slice_as_of(df, as_of_date)
     n = len(selected)
     series = {c: selected[c].tolist() for c in ASSET_CODES}
-    names = {"510300": "stock", "511010": "bond", "518880": "gold"}
 
     status = {}
     features = {}
@@ -74,7 +76,7 @@ def compute_market_features(df, as_of_date: str) -> dict:
             "reason": "ok" if ok else "insufficient_window",
         }
         features[f"asset_return_{w}d"] = {
-            names[c]: (compound(series[c][-w:]) if ok else None) for c in ASSET_CODES
+            c: (compound(series[c][-w:]) if ok else None) for c in ASSET_CODES
         }
     for w in VOL_WINDOWS:
         ok = n >= w
@@ -83,7 +85,7 @@ def compute_market_features(df, as_of_date: str) -> dict:
             "reason": "ok" if ok else "insufficient_window",
         }
         features[f"asset_volatility_{w}d"] = {
-            names[c]: (ann_vol(series[c][-w:]) if ok else None) for c in ASSET_CODES
+            c: (ann_vol(series[c][-w:]) if ok else None) for c in ASSET_CODES
         }
     correlations = {}
     for w in CORR_WINDOWS:
@@ -95,6 +97,7 @@ def compute_market_features(df, as_of_date: str) -> dict:
         if ok:
             matrix = corr_matrix(series, w)
             if any(v is None for row in matrix.values() for v in row.values()):
+                status[f"corr_{w}d"]["sufficient"] = False
                 status[f"corr_{w}d"]["reason"] = "zero_variance_asset"
             correlations[f"corr_{w}d"] = matrix
         else:
