@@ -1,6 +1,6 @@
 # data_processing（2号 数据处理模块）
 
-版本：v1.1（2026-11-26，按审查意见修订：公共接口方案A）　负责人：2号 mdy
+版本：v1.2（2026-11-26，复查修订：样本接口 n 校验＋日期 ASCII 显式化）　负责人：2号 mdy
 依据：`docs/第二阶段开发分工与接口规范.md` §2/§5.1、`docs/统一数据口径说明.md` §3–5、《第一阶段最终实验设计方案》附录B。
 
 ## 1. 职责与文件
@@ -13,7 +13,7 @@
 | `feature_builder.py` | 1号既有实现，原样保留（数值对照基准，未修改） |
 | `examples/` | 输入输出示例 JSON（含窗口不足示例） |
 | `TEST_REPORT.md` | 独立测试报告 |
-| `../tests/test_data_processing.py` | 独立测试（23 用例） |
+| `../tests/test_data_processing.py` | 独立测试（25 用例） |
 
 冻结数据版本：SHA-256 前12位 `c8ae2dad3039`，3236 行，2013-07-30 ~ 2026-11-20。本模块不下载行情、不改矩阵、不做任何填充。
 
@@ -47,7 +47,9 @@ payload = get_market_data_input("2026-11-20")   # 默认读 data/unified_returns
 
 **窗口不足语义（口径说明 5.4）**：观测数不足的窗口对应字段为 `null`（相关矩阵整体为 `null`），原因记录在 `window_status`；消费方必须先检查 `data_quality.insufficient_windows`，不得把 `null` 当 0 或伪装完整窗口。20/60 日特征在样本 ≥60 日后即可用，250 日字段自 2014-08-06 起可用。**零方差**：某资产窗口内方差为 0 使相关系数为 `null` 时，该相关窗口记 `sufficient=False`、`reason=zero_variance_asset`，并进入 `insufficient_windows`（矩阵保留其余可算元素）。
 
-**日期语义**：`as_of_date` 严格只接受 `YYYY-MM-DD` 字符串；带时间、时区后缀、空白、非零填充、非法日历日及其他类型（含显式 `None`）一律 `ValueError`；省略参数时默认矩阵末日。
+**日期语义**：`as_of_date` 严格只接受 ASCII 数字的 `YYYY-MM-DD` 字符串；带时间、时区后缀、空白、非零填充、全角/其他 Unicode 数字、非法日历日及其他类型（含显式 `None`）一律 `ValueError`；省略参数时默认矩阵末日。
+
+**样本接口与相关矩阵约定**：`get_returns_window(as_of, n)` 的 `n` 必须为正整数（`None` 返回全部）；`n` 超过截至日可用观测数时抛 `ValueError`，不静默返回短样本，消费方可先查 `sample_days_to_date`。相关矩阵对角线（自相关）恒为 1.0（含零方差资产）；零方差只影响非对角元素置 `null`。
 
 **防未来泄漏**：所有计算仅用 `<= as_of_date` 的观测；`as_of_date` 必须是矩阵内交易日，否则抛 `ValueError`。
 
@@ -59,5 +61,6 @@ payload = get_market_data_input("2026-11-20")   # 默认读 data/unified_returns
 ## 5. 尚未解决 / 需群内确认
 
 1. `interfaces/data_schema.py` 的 `AssetValues`（stock/bond/gold）与方案A 代码键不一致，公共文件由1号同步更新；本模块不擅自修改。
-2. 停牌/不可交易判断不在本模块（冻结矩阵无停牌字段）；E 日顺延规则由5号结合 `next_trading_day` 与可交易信息实现。
-3. 协方差求解、权重求解属3号职责；本模块仅提供 `get_returns_window` 样本接口。
+2. 实现侧补定语义需3号/4号接入知悉：`get_returns_window` 的 `n` 超可用观测抛 `ValueError`（不返回短样本）；相关矩阵对角线恒 1.0。
+3. 停牌/不可交易判断不在本模块（冻结矩阵无停牌字段）；E 日顺延规则由5号结合 `next_trading_day` 与可交易信息实现。
+4. 协方差求解、权重求解属3号职责；本模块仅提供 `get_returns_window` 样本接口。

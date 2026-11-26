@@ -1,9 +1,9 @@
 # 数据处理模块独立测试报告
 
-日期：2026-11-26　负责人：2号 mdy　模块版本：v1.1（审查修订：公共接口方案A）
-环境：Python 3.13.18（负责人本机）；v1.0 曾于 Python 3.12.11 云验证机复跑；pandas / openpyxl 见根目录 requirements.txt。
+日期：2026-11-26　负责人：2号 mdy　模块版本：v1.2（复查修订：样本接口 n 校验＋日期 ASCII 显式化）
+环境：Python 3.12.11（云验证机）与 Python 3.13.18（负责人本机）双环境复跑；pandas / openpyxl 见根目录 requirements.txt。
 命令：仓库根目录 `python tests/test_data_processing.py`
-结果：**Ran 23 tests — OK（23/23 通过，0 失败 0 错误）**
+结果：**Ran 25 tests — OK（25/25 通过，0 失败 0 错误）**
 
 ## 用例覆盖
 
@@ -13,7 +13,8 @@
 | TestNoLookahead | 2 | 2024-06-28 全量计算与截断计算结果逐键相等；250 日窗口切片末行=as_of 且无未来日期 |
 | TestKnownValues | 4 | 2026-11-20 全部收益/波动/60d与250d相关矩阵用独立手工公式复算，误差 <1e-12；与1号 feature_builder 同日期数值一致 <1e-12；JSON 可 allow_nan=False 序列化 |
 | TestPublicCodeKeys | 2 | 方案A：market_features 与相关矩阵全部资产键=证券代码；整份 JSON 不含 "stock"/"bond"/"gold"；data_quality 无 asset_code_mapping |
-| TestStrictDate | 2 | 拒绝带时间/时区后缀/空白/非零填充/非法日历日/整数/None/date/datetime/列表等 14 类输入；next_trading_day 同样严格；纯 YYYY-MM-DD 正常接受 |
+| TestStrictDate | 2 | 拒绝带时间/时区后缀/空白/非零填充/非法日历日/整数/None/date/datetime/列表/全角与阿拉伯-印度数字等 16 类输入；next_trading_day 同样严格；纯 YYYY-MM-DD 正常接受 |
+| TestReturnsWindow | 2 | n=0/负数/bool/浮点/字符串抛 ValueError；n 超截至日可用观测抛 ValueError（不静默返回短样本）；n=None 返回全部 3236 行；n=可用数正常返回 |
 | TestZeroVariance | 2 | synthetic_test（260 日、510300 恒零收益）：corr_60d/corr_250d 的 sufficient=False、reason=zero_variance_asset、进入 insufficient_windows；涉及零方差资产的相关元素为 null、其余可算；零方差资产波动=0 |
 | TestInsufficientWindow | 2 | 2013-12-31（104 观测）：20/60 可用、250 波动与 250 相关为 null 且 reason=insufficient_window；2013-08-30（<60）：60 日收益为 null |
 | TestInvalidAsOf | 2 | 非交易日/节假日/矩阵首日之前/非法格式均抛 ValueError |
@@ -34,6 +35,7 @@
 
 - v1.0（2026-11-25）：首版 16 用例；后补相对路径用例至 17。
 - v1.1（2026-11-26）：按审查意见修订——公开输出资产键统一证券代码（方案A）；as_of_date 严格 YYYY-MM-DD（显式 None 亦拒绝）；零方差相关窗口 sufficient=False 并入 insufficient_windows；保留 corr_60d/corr_250d 与窗口不足 null 语义；README、两份示例、测试同步更新；用例 17→23。
+- v1.2（2026-11-26）：复查修订——get_returns_window 增加 n 正整数校验与窗口不足抛错（修复 n=0/负数/bool 静默错误、n 超可用静默短样本）；日期正则显式 ASCII（[0-9]），全角/Unicode 数字拒绝报错更明确；README 补充样本接口与对角线约定；用例 23→25。数值口径与示例输出无变化。
 
 ## 结论
 

@@ -163,7 +163,8 @@ class TestStrictDate(unittest.TestCase):
         bad = ["2026-11-20T00:00:00", "2026-11-20 00:00:00", "2026-11-20Z",
                "2026-11-20+08:00", "20261120", "2026-1-5", "2026-02-30",
                " 2026-11-20", "2026-11-20\n", 20261120, None,
-               date(2026, 11, 20), datetime(2026, 11, 20), ["2026-11-20"]]
+               date(2026, 11, 20), datetime(2026, 11, 20), ["2026-11-20"],
+               "２０２６-１１-２０", "٢٠٢٦-١١-٢٠"]
         for value in bad:
             with self.assertRaises(ValueError, msg=repr(value)):
                 di.get_market_data_input(value)
@@ -174,6 +175,21 @@ class TestStrictDate(unittest.TestCase):
         payload = di.get_market_data_input("2026-11-20")
         self.assertEqual(payload["as_of_date"], "2026-11-20")
         self.assertEqual(di.next_trading_day("2014-11-28"), "2014-12-01")
+
+
+class TestReturnsWindow(unittest.TestCase):
+    """样本接口 n 语义：正整数校验；超过可用观测抛错，不静默返回短样本。"""
+
+    def test_invalid_n_raises(self):
+        for n in (0, -3, True, 2.5, "60"):
+            with self.assertRaises(ValueError, msg=repr(n)):
+                di.get_returns_window(AS_OF, n)
+
+    def test_insufficient_n_raises_and_none_full(self):
+        with self.assertRaises(ValueError):
+            di.get_returns_window("2013-08-30", 10000)
+        self.assertEqual(len(di.get_returns_window(AS_OF, None)), 3236)
+        self.assertEqual(len(di.get_returns_window("2013-08-30", 24)), 24)
 
 
 class TestZeroVariance(unittest.TestCase):

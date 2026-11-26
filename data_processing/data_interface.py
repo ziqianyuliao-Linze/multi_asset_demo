@@ -2,7 +2,7 @@
 
 公开函数：
 - load_unified_returns(path=None)            冻结矩阵 DataFrame
-- get_returns_window(as_of, n=None, path=None)  截至 as_of 的最近 n 个共同交易日收益
+- get_returns_window(as_of, n=None, path=None)  截至 as_of 的最近 n 个共同交易日收益（n 正整数；不足抛错）
 - get_market_data_input(as_of=省略, path=None)  基础市场输入四字段（方案A：资产键为证券代码；as_of 严格 YYYY-MM-DD）
 - get_trading_calendar(path=None)            共同交易日历
 - next_trading_day(date, path=None)          下一共同交易日（无则 None）
@@ -38,9 +38,20 @@ _LATEST = object()  # 省略 as_of_date 时的内部哨兵；显式 None 视为�
 
 
 def get_returns_window(as_of_date: str, n=None, path=None):
+    """截至 as_of_date 的最近 n 个共同交易日收益样本（n=None 返回全部）。
+
+    n 必须为正整数（拒绝 bool/0/负数/浮点/字符串）；n 超过截至日可用观测数时
+    抛 ValueError，不静默返回短样本（消费方可先查 data_quality.sample_days_to_date）。
+    """
     df = load_unified_returns(path)
     selected = slice_as_of(df, as_of_date)
-    return selected if n is None else selected.tail(n)
+    if n is None:
+        return selected
+    if isinstance(n, bool) or not isinstance(n, int) or n < 1:
+        raise ValueError(f"n 必须为正整数或 None，实际 {n!r}")
+    if n > len(selected):
+        raise ValueError(f"窗口不足：需要 {n} 日，截至 {as_of_date} 仅 {len(selected)} 日可用")
+    return selected.tail(n)
 
 
 def get_trading_calendar(path=None) -> list:

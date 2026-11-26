@@ -24,7 +24,7 @@ def _validate_date_string(value) -> str:
     """严格只接受 YYYY-MM-DD 字符串；拒绝带时间/后缀/空白及其他类型。"""
     if not isinstance(value, str):
         raise ValueError(f"日期必须为 YYYY-MM-DD 字符串，实际类型 {type(value).__name__}")
-    if re.fullmatch(r"\d{4}-\d{2}-\d{2}", value) is None:
+    if re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}", value) is None:
         raise ValueError(f"日期格式必须严格为 YYYY-MM-DD：{value!r}")
     datetime.strptime(value, "%Y-%m-%d")
     return value
