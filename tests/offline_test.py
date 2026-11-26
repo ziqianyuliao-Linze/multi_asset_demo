@@ -22,12 +22,20 @@ def main():
         'cvar_95': 0.0138,
         'trigger_flags': {'drawdown': True, 'volatility': True, 'correlation': False,
                           'concentration': True},
-        'risk_contribution': {'stock': 0.322, 'bond': 0.002, 'gold': 0.676},
-        'budget_deviation': {'stock': -0.011, 'bond': -0.331, 'gold': 0.343},
+        'risk_contribution': {'510300': 0.322, '511010': 0.002, '518880': 0.676},
+        'budget_deviation': {'510300': -0.011, '511010': -0.331, '518880': 0.343},
         'drawdown_attribution': {'start': '2026-01-29', 'end': market['as_of_date'],
-                                 'stock': -0.0527, 'bond': 0.0070, 'gold': -0.151},
-        'risk_change_attribution': {'base': '2025-11-20', 'gold': {'vol': 0.129, 'corr': -0.049, 'weight': 0}},
-        'concentration_state': {'gold': 0.676, 'neff': 1.78},
+                                 '510300': -0.0527, '511010': 0.0070, '518880': -0.151,
+                                 'transaction_cost': -0.001},
+        'risk_change_attribution': {
+            'base': '2025-11-20',
+            '510300': {'vol': 0.010, 'corr': -0.005, 'weight': 0, 'residual': 0},
+            '511010': {'vol': -0.002, 'corr': 0.001, 'weight': 0, 'residual': 0},
+            '518880': {'vol': 0.129, 'corr': -0.049, 'weight': 0, 'residual': 0},
+        },
+        'concentration_state': {
+            '510300': 0.322, '511010': 0.002, '518880': 0.676, 'neff': 1.78,
+        },
     }
     report = {'matrix_rows': len(records), 'as_of_date': market['as_of_date'],
               'mode': 'offline_mock', 'groups': {}}

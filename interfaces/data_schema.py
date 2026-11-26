@@ -84,11 +84,46 @@ class TriggerFlags(TypedDict):
     correlation: bool
 
 
-class RiskChangeAttribution(TypedDict):
-    weight: AssetValues
-    vol: AssetValues
-    corr: AssetValues
+class AttributionEffects(TypedDict):
+    weight: float
+    vol: float
+    corr: float
     residual: float
+
+
+DrawdownAttribution = TypedDict(
+    "DrawdownAttribution",
+    {
+        "start": str | None,
+        "end": str,
+        "510300": float,
+        "511010": float,
+        "518880": float,
+        "transaction_cost": float,
+    },
+)
+
+
+RiskChangeAttribution = TypedDict(
+    "RiskChangeAttribution",
+    {
+        "base": str,
+        "510300": AttributionEffects,
+        "511010": AttributionEffects,
+        "518880": AttributionEffects,
+    },
+)
+
+
+ConcentrationState = TypedDict(
+    "ConcentrationState",
+    {
+        "510300": float,
+        "511010": float,
+        "518880": float,
+        "neff": float,
+    },
+)
 
 
 class RiskFeedback(TypedDict):
@@ -100,9 +135,9 @@ class RiskFeedback(TypedDict):
     trigger_flags: NotRequired[TriggerFlags]
     risk_contribution: NotRequired[AssetValues]
     budget_deviation: NotRequired[AssetValues]
-    drawdown_attribution: NotRequired[AssetValues]
+    drawdown_attribution: NotRequired[DrawdownAttribution]
     risk_change_attribution: NotRequired[RiskChangeAttribution]
-    concentration_state: NotRequired[str]
+    concentration_state: NotRequired[ConcentrationState]
 
 
 class ModelInput(TypedDict):

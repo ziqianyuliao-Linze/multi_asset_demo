@@ -20,7 +20,6 @@ from data_processing.feature_builder import (
 
 from risk_metrics.risk_feedback import (
     HOLDING_COLUMNS,
-    NAMES,
     build_feedback,
     closing_weights,
     covariance,
@@ -40,6 +39,7 @@ from risk_metrics.risk_integration import (
     read_decisions,
     run_integration,
 )
+from llm_decision.validator import build_model_input
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -139,6 +139,35 @@ class RiskIntegrationTests(unittest.TestCase):
             after, _ = build_feedback(self.records, changed[group], self.day, group, self.base)
             self.assertEqual(before, after)
 
+    def test_actual_D_feedback_enters_llm_payload(self):
+        market_data = json.loads(
+            (ROOT / 'decision_input.json').read_text(
+                encoding='utf-8'
+            )
+        )
+        feedback, _ = build_feedback(
+            self.records,
+            self.groups['D'],
+            self.day,
+            'D',
+            self.base,
+        )
+
+        payload = build_model_input(
+            market_data,
+            'D',
+            feedback,
+        )
+
+        self.assertEqual(
+            payload['feedback'],
+            {
+                key: value
+                for key, value in feedback.items()
+                if key != 'as_of_date'
+            },
+        )
+
     def test_no_future_observations(self):
         cutoff = self.records[-10][0]
         prefix = [(d, r) for d, r in self.records if d <= cutoff]
@@ -156,15 +185,15 @@ class RiskIntegrationTests(unittest.TestCase):
         self.assertAlmostEqual(path['navs'][-1], 1.1 * 0.79)
         attribution = drawdown_attribution(path, records)
         self.assertEqual(attribution['start'], '2020-01-02')
-        self.assertAlmostEqual(attribution['stock'], -0.20)
+        self.assertAlmostEqual(attribution['510300'], -0.20)
         self.assertAlmostEqual(attribution['transaction_cost'], -0.01)
-        self.assertAlmostEqual(sum(attribution[k] for k in (*NAMES, 'transaction_cost')),
+        self.assertAlmostEqual(sum(attribution[k] for k in (*ASSETS, 'transaction_cost')),
                                path['drawdowns'][-1])
 
     def test_current_drawdown_and_change_reconcile(self):
         feedback = self.load('feedback_group_D.json')
         attribution = feedback['drawdown_attribution']
-        self.assertAlmostEqual(sum(attribution[k] for k in (*NAMES, 'transaction_cost')),
+        self.assertAlmostEqual(sum(attribution[k] for k in (*ASSETS, 'transaction_cost')),
                                feedback['current_drawdown'], places=11)
         current = feedback['risk_contribution']
         baseline, _ = build_feedback(self.records, self.groups['D'], self.base, 'C')
@@ -173,8 +202,8 @@ class RiskIntegrationTests(unittest.TestCase):
         row = next(row for row in self.groups['D'] if row['date'] == self.base)
         old = risk_contributions(closing_weights(row, dict(self.records)[self.base]), cov)
         changes = feedback['risk_change_attribution']
-        for name, previous in zip(NAMES, old):
-            self.assertAlmostEqual(sum(changes[name].values()), current[name] - previous, places=10)
+        for code, previous in zip(ASSETS, old):
+            self.assertAlmostEqual(sum(changes[code].values()), current[code] - previous, places=10)
 
     def test_cvar_fractional_tail(self):
         returns = [-float(i) / 10000 for i in range(250)]

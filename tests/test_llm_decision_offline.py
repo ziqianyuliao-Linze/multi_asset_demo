@@ -10,6 +10,7 @@ from unittest.mock import patch
 
 from openai import APIConnectionError, APIStatusError
 
+from deepseek_client import build_user_payload
 from llm_decision.client import DeepSeekTruncationError
 from llm_decision.decision import generate_decision
 
@@ -88,14 +89,41 @@ FEEDBACK_D = {
         "511010": 0.05,
         "518880": 0.00,
     },
-    "drawdown_attribution": ASSET_VALUES,
-    "risk_change_attribution": {
-        "weight": ASSET_VALUES,
-        "vol": ASSET_VALUES,
-        "corr": ASSET_VALUES,
-        "residual": 0.0,
+    "drawdown_attribution": {
+        "start": "2026-10-01",
+        "end": "2026-11-20",
+        "510300": -0.02,
+        "511010": 0.005,
+        "518880": -0.015,
+        "transaction_cost": -0.001,
     },
-    "concentration_state": "moderate",
+    "risk_change_attribution": {
+        "base": "2026-10-01",
+        "510300": {
+            "weight": 0.01,
+            "vol": 0.02,
+            "corr": -0.01,
+            "residual": 0.0,
+        },
+        "511010": {
+            "weight": -0.01,
+            "vol": 0.0,
+            "corr": 0.005,
+            "residual": 0.0,
+        },
+        "518880": {
+            "weight": 0.0,
+            "vol": -0.02,
+            "corr": 0.005,
+            "residual": 0.0,
+        },
+    },
+    "concentration_state": {
+        "510300": 0.35,
+        "511010": 0.50,
+        "518880": 0.15,
+        "neff": 2.41,
+    },
 }
 
 
@@ -212,6 +240,12 @@ class TestLLMDecisionOffline(unittest.TestCase):
         self.assertNotIn("feedback", result)
         self.assertNotIn("experiment_group", result)
 
+    def test_compatibility_payload_builder(self):
+        self.assertEqual(
+            build_user_payload(self.market_data, "A"),
+            build_model_input(self.market_data, "A"),
+        )
+
     def test_group_B(self):
         result = build_model_input(
             self.market_data, "B", FEEDBACK_B
@@ -237,6 +271,35 @@ class TestLLMDecisionOffline(unittest.TestCase):
 
         self.assertEqual(
             result["feedback"], FEEDBACK_D
+        )
+
+    def test_group_D_accepts_risk_feedback_envelope(self):
+        feedback = {
+            "as_of_date": self.market_data["as_of_date"],
+            **FEEDBACK_D,
+        }
+
+        result = build_model_input(
+            self.market_data, "D", feedback
+        )
+
+        self.assertEqual(result["feedback"], FEEDBACK_D)
+        self.assertNotIn("as_of_date", result["feedback"])
+
+        feedback["as_of_date"] = "2026-11-19"
+        with self.assertRaises(ValueError):
+            build_model_input(
+                self.market_data, "D", feedback
+            )
+
+    def test_group_D_rejects_asset_names(self):
+        feedback = copy.deepcopy(FEEDBACK_D)
+        feedback["risk_contribution"]["stock"] = (
+            feedback["risk_contribution"].pop("510300")
+        )
+
+        self.assertFalse(
+            validate_risk_feedback(feedback, "D")
         )
 
     def test_group_A_rejects_feedback(self):

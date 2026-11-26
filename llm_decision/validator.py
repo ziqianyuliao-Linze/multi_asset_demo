@@ -21,6 +21,7 @@ from interfaces.data_schema import (
     validate_market_input,
     validate_model_decision,
     validate_asset_values,
+    validate_date,
     is_finite_number,
 )
 
@@ -124,22 +125,74 @@ def validate_risk_change_attribution(data: dict) -> bool:
     if not isinstance(data, dict):
         return False
 
-    required = {
-        "weight",
-        "vol",
-        "corr",
-        "residual",
-    }
+    required = {"base", *ASSET_CODES}
 
     if set(data.keys()) != required:
         return False
 
-    for field in ["weight", "vol", "corr"]:
+    if not validate_date(data["base"]):
+        return False
 
-        if not validate_asset_values(data[field]):
+    effect_fields = {"weight", "vol", "corr", "residual"}
+    for code in ASSET_CODES:
+        effects = data[code]
+        if (
+            not isinstance(effects, dict)
+            or set(effects) != effect_fields
+            or not all(
+                is_finite_number(value)
+                for value in effects.values()
+            )
+        ):
             return False
 
-    return is_finite_number(data["residual"])
+    return True
+
+
+def validate_drawdown_attribution(data: dict) -> bool:
+
+    if not isinstance(data, dict):
+        return False
+
+    required = {
+        "start",
+        "end",
+        "transaction_cost",
+        *ASSET_CODES,
+    }
+
+    if set(data) != required:
+        return False
+
+    start = data["start"]
+    end = data["end"]
+
+    if (
+        (start is not None and not validate_date(start))
+        or not validate_date(end)
+        or (start is not None and start >= end)
+    ):
+        return False
+
+    return all(
+        is_finite_number(data[field])
+        for field in (*ASSET_CODES, "transaction_cost")
+    )
+
+
+def validate_concentration_state(data: dict) -> bool:
+
+    if (
+        not isinstance(data, dict)
+        or set(data) != {*ASSET_CODES, "neff"}
+        or not all(
+            is_finite_number(value)
+            for value in data.values()
+        )
+    ):
+        return False
+
+    return data["neff"] > 0
 
 
 # ==================================================
@@ -149,6 +202,7 @@ def validate_risk_change_attribution(data: dict) -> bool:
 def validate_risk_feedback(
     feedback: dict,
     group: str,
+    expected_date: str | None = None,
 ) -> bool:
     """
     Validate risk feedback according to A/B/C/D rules.
@@ -166,13 +220,24 @@ def validate_risk_feedback(
         return False
 
     allowed_fields = GROUP_FEEDBACK_FIELDS[group]
+    feedback_date = feedback.get("as_of_date")
+    actual_fields = set(feedback) - {"as_of_date"}
+
+    if feedback_date is not None and (
+        not validate_date(feedback_date)
+        or (
+            expected_date is not None
+            and feedback_date != expected_date
+        )
+    ):
+        return False
 
     # Reject fields not authorized for this group.
-    if not set(feedback.keys()).issubset(allowed_fields):
+    if not actual_fields.issubset(allowed_fields):
         return False
 
     # All fields required by this group must be present.
-    if set(feedback.keys()) != allowed_fields:
+    if actual_fields != allowed_fields:
         return False
 
     if group == "A":
@@ -213,21 +278,24 @@ def validate_risk_feedback(
         for field in [
             "risk_contribution",
             "budget_deviation",
-            "drawdown_attribution",
         ]:
             if not validate_asset_values(
                 feedback[field]
             ):
                 return False
 
+        if not validate_drawdown_attribution(
+            feedback["drawdown_attribution"]
+        ):
+            return False
+
         if not validate_risk_change_attribution(
             feedback["risk_change_attribution"]
         ):
             return False
 
-        if not isinstance(
-            feedback["concentration_state"],
-            str,
+        if not validate_concentration_state(
+            feedback["concentration_state"]
         ):
             return False
 
@@ -288,12 +356,20 @@ def build_model_input(
             f"Group {group} requires risk feedback."
         )
 
-    if not validate_risk_feedback(feedback, group):
+    if not validate_risk_feedback(
+        feedback,
+        group,
+        expected_date=market_data["as_of_date"],
+    ):
         raise ValueError(
             f"Group {group} risk feedback is invalid."
         )
 
-    model_input["feedback"] = deepcopy(feedback)
+    model_input["feedback"] = {
+        key: deepcopy(value)
+        for key, value in feedback.items()
+        if key != "as_of_date"
+    }
 
     return model_input
 
