@@ -26,3 +26,10 @@ Thumbs.db
 # Results generated during experiments
 results/*
 !results/.gitkeep
+
+# 测试运行产物（可随时重新生成）
+tests/risk_test_runs/
+tests/input_group_*.json
+tests/feedback_group_*.json
+tests/mock_decision_output.json
+tests/offline_test_report.json
