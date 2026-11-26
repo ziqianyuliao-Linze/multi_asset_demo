@@ -162,8 +162,12 @@ def test_change_attribution() -> None:
 
     res = R.change_attribution((1 / 3,) * 3, (1 / 3,) * 3, c0, c1)
     assert res["total"]["stock"] > 0
-    assert math.isclose(res["vol_effect"]["stock"], res["total"]["stock"], **TOL)
     assert abs(res["weight_effect"]["stock"]) < 1e-12
+    # 四项相加必须等于总变化（中心差分 + 残差）
+    for a in C.ASSETS:
+        ssum = (res["weight_effect"][a] + res["vol_effect"][a]
+                + res["corr_effect"][a] + res["residual"][a])
+        assert math.isclose(ssum, res["total"][a], abs_tol=1e-12)
 
 
 # ======================= 二、异常处理 =======================

@@ -330,29 +330,54 @@ def find_drawdown_episodes(equity, top_n: int = 3) -> List[Dict[str, object]]:
 
 
 # ---------------------------------------------------------------- 12 变化归因
-def change_attribution(w0, w1, cov0, cov1) -> Dict[str, object]:
+def change_attribution(w0, w1, cov0, cov1, step: float = 1e-5) -> Dict[str, object]:
     """
-    RC 变化三分解（顺序分解，三项相加 = 总变化）：
+    风险贡献变化的中心差分分解（统一口径：步长 1e-5，残差单列）。
 
-      权重效应  = RC(w1,Σ0) − RC(w0,Σ0)
-      波动效应  = RC(w1,Σvol) − RC(w1,Σ0)   Σvol：Σ1 的波动率 + Σ0 的相关性
-      相关效应  = RC(w1,Σ1) − RC(w1,Σvol)
+    对 RC% 沿三类输入的实际变化方向做中心差分：
+      权重效应  → 权重从 w0 向 w1 走 ±step
+      波动效应  → 波动率从 σ0 向 σ1 走 ±step
+      相关效应  → 相关系数从 ρ0 向 ρ1 走 ±step
+    实际变化扣除三项后得到 residual，四项相加等于总变化。
     """
     w0, w1 = _as_weights(w0), _as_weights(w1)
     s0, s1 = np.asarray(cov0, dtype=float), np.asarray(cov1, dtype=float)
     v0, v1 = np.sqrt(np.diag(s0)), np.sqrt(np.diag(s1))
-    corr0 = s0 / np.outer(v0, v0)
-    s_vol = corr0 * np.outer(v1, v1)
+    r0 = s0 / np.outer(v0, v0)
+    r1 = s1 / np.outer(v1, v1)
 
-    def rc(w, s):
-        return np.array([risk_contribution(w, s)["rc_pct"][a] for a in ASSETS])
+    def rc_of(w, v, corr):
+        cov = corr * np.outer(v, v)
+        return np.array([risk_contribution(w, cov)["rc_pct"][a] for a in ASSETS])
 
-    a0, aw, av, a1 = rc(w0, s0), rc(w1, s0), rc(w1, s_vol), rc(w1, s1)
+    def central(perturb):
+        plus = rc_of(*perturb(+step))
+        minus = rc_of(*perturb(-step))
+        return (plus - minus) / (2.0 * step)
+
+    def p_weight(d):
+        return (list(w0 + d * (w1 - w0)), v0, r0)
+
+    def p_vol(d):
+        return (w0, v0 + d * (v1 - v0), r0)
+
+    def p_corr(d):
+        return (w0, v0, r0 + d * (r1 - r0))
+
+    eff = {"weight": central(p_weight), "vol": central(p_vol), "corr": central(p_corr)}
+    a0, a1 = rc_of(w0, v0, r0), rc_of(w1, v1, r1)
+    resid = a1 - a0 - sum(eff.values())
+
+    def as_dict(vec):
+        return {a: float(vec[i]) for i, a in enumerate(ASSETS)}
+
     return {
-        "rc_start": {a: float(a0[i]) for i, a in enumerate(ASSETS)},
-        "rc_end": {a: float(a1[i]) for i, a in enumerate(ASSETS)},
-        "total": {a: float(a1[i] - a0[i]) for i, a in enumerate(ASSETS)},
-        "weight_effect": {a: float(aw[i] - a0[i]) for i, a in enumerate(ASSETS)},
-        "vol_effect": {a: float(av[i] - aw[i]) for i, a in enumerate(ASSETS)},
-        "corr_effect": {a: float(a1[i] - av[i]) for i, a in enumerate(ASSETS)},
+        "rc_start": as_dict(a0),
+        "rc_end": as_dict(a1),
+        "total": as_dict(a1 - a0),
+        "weight_effect": as_dict(eff["weight"]),
+        "vol_effect": as_dict(eff["vol"]),
+        "corr_effect": as_dict(eff["corr"]),
+        "residual": as_dict(resid),
+        "step": float(step),
     }
