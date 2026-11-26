@@ -1,6 +1,6 @@
 # data_processing（2号 数据处理模块）
 
-版本：v1.2（2026-11-26，复查修订：样本接口 n 校验＋日期 ASCII 显式化）　负责人：2号 mdy
+版本：v1.3（2026-11-26，文档同步：公共 schema 已由1号在 PR #1 完成同步）　负责人：2号 mdy
 依据：`docs/第二阶段开发分工与接口规范.md` §2/§5.1、`docs/统一数据口径说明.md` §3–5、《第一阶段最终实验设计方案》附录B。
 
 ## 1. 职责与文件
@@ -55,12 +55,12 @@ payload = get_market_data_input("2026-11-20")   # 默认读 data/unified_returns
 
 ## 4. 与既有代码的关系
 
-- `interfaces/data_schema.py` 为公共接口文件，本模块未修改：顶层四字段与 `market_features` 字段名与其 TypedDict 对齐（测试覆盖）；内层资产键按方案A 用证券代码，该文件 `AssetValues` 仍为 stock/bond/gold，**待1号同步**（见 §5）。
+- `interfaces/data_schema.py` 为公共接口文件，本模块未修改：顶层四字段与 `market_features` 字段名与其 TypedDict 对齐（测试覆盖）；内层资产键按方案A 用证券代码，公共 schema 的资产键**已由1号在 PR #1 中完成同步**（代码键，PR #1 合并入 main 后生效）。
 - 1号 `feature_builder.py` 与 `tests/offline_test.py`、4号集成测试保持原样；本模块与其数值一致性在 1e-12 内（测试覆盖）。legacy 输出本就为代码键，与方案A 一致，形状冲突已消除。
 
 ## 5. 尚未解决 / 需群内确认
 
-1. `interfaces/data_schema.py` 的 `AssetValues`（stock/bond/gold）与方案A 代码键不一致，公共文件由1号同步更新；本模块不擅自修改。
+1. 公共 schema 资产键已由1号在 PR #1 中完成同步（代码键）；PR #1 尚未合并入 main，合并前本分支测试仍对照旧版 schema 字段名（顶层与字段名一致、内层键按方案A，已核验与新版逐键兼容）。
 2. 实现侧补定语义需3号/4号接入知悉：`get_returns_window` 的 `n` 超可用观测抛 `ValueError`（不返回短样本）；相关矩阵对角线恒 1.0。
 3. 停牌/不可交易判断不在本模块（冻结矩阵无停牌字段）；E 日顺延规则由5号结合 `next_trading_day` 与可交易信息实现。
 4. 协方差求解、权重求解属3号职责；本模块仅提供 `get_returns_window` 样本接口。

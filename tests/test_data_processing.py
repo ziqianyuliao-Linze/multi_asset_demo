@@ -284,7 +284,7 @@ class TestSchemaShape(unittest.TestCase):
         self.assertEqual(set(payload["market_features"]),
                          set(data_schema.MarketFeatures.__annotations__))
         # 方案A（2026-11-26 审查确认）：内层键为证券代码；
-        # interfaces/data_schema.py 的 AssetValues 仍为 stock/bond/gold，待1号同步。
+        # interfaces/data_schema.py 的资产键已由1号在 PR #1 中完成同步（代码键，合并入 main 后生效）。
         for key in data_schema.MarketFeatures.__annotations__:
             self.assertEqual(set(payload["market_features"][key]), set(ASSET_CODES))
         self.assertTrue(data_schema.validate_date(payload["as_of_date"]))
