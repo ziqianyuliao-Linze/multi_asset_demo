@@ -4,6 +4,7 @@ import csv
 import hashlib
 import json
 import math
+import os
 import random
 import subprocess
 import sys
@@ -20,6 +21,8 @@ from risk_feedback import (HOLDING_COLUMNS, NAMES, build_feedback, covariance,
 from risk_integration import decision_to_weights, read_decisions, run_integration
 
 ROOT = Path(__file__).resolve().parent
+MODULE_DIR = ROOT.parent / 'risk_metrics'
+DATA_DIR = ROOT.parent / 'data_processing'
 
 
 def make_fixture(records, target):
@@ -56,11 +59,14 @@ class RiskIntegrationTests(unittest.TestCase):
                             risk_budget=dict(zip(ASSETS, [0.4, 0.4, 0.2])),
                             decision_summary='离线测试预算，未调用模型') for g in 'ABCD'}
         write_json(decisions, cls.decisions_file)
-        command = [sys.executable, '-B', '-E', '-S', '-X', 'utf8', str(ROOT / 'risk_integration.py'),
+        command = [sys.executable, '-B', '-X', 'utf8', str(MODULE_DIR / 'risk_integration.py'),
                    str(MATRIX), '--holdings', str(cls.holdings_file), '--as-of', cls.day,
                    '--base-date', cls.base, '--decisions', str(cls.decisions_file),
                    '--data-kind', 'synthetic_test', '--output-dir', str(OUTPUT / 'runs')]
-        result = subprocess.run(command, capture_output=True, text=True, encoding='utf-8')
+        env = dict(os.environ)
+        env['PYTHONPATH'] = os.pathsep.join((str(MODULE_DIR), str(DATA_DIR), str(ROOT)))
+        result = subprocess.run(command, capture_output=True, text=True,
+                                encoding='utf-8', env=env)
         if result.returncode:
             raise AssertionError(f'正常命令入口失败，{result.stderr}')
         cls.console = json.loads(result.stdout)
@@ -270,8 +276,9 @@ if __name__ == '__main__':
                    tests_run=result.testsRun, failures=len(result.failures), errors=len(result.errors),
                    passed=result.wasSuccessful(), api_called=False, real_holdings_validated=False,
                    matrix_sha256=hashlib.sha256(MATRIX.read_bytes()).hexdigest(),
-                   source_sha256={name: hashlib.sha256((ROOT / name).read_bytes()).hexdigest()
-                                  for name in ('risk_feedback.py', 'risk_integration.py', 'test_risk_integration.py')},
+                   source_sha256={name: hashlib.sha256((MODULE_DIR / name).read_bytes()).hexdigest()
+                                  for name in ('risk_feedback.py', 'risk_integration.py')}
+                   | {'test_risk_integration.py': hashlib.sha256((ROOT / 'test_risk_integration.py').read_bytes()).hexdigest()},
                    integration_report=str(getattr(RiskIntegrationTests, 'run_dir', OUTPUT) / 'integration_report.json'))
     write_json(summary, OUTPUT / 'test_report.json')
     print(json.dumps(dict(report_path=str(OUTPUT / 'test_report.json'), **summary), ensure_ascii=False, indent=2))
