@@ -1,4 +1,5 @@
 
+import copy
 import json
 import unittest
 import tempfile
@@ -21,6 +22,11 @@ from llm_decision.validator import (
 from llm_decision.fallback import resolve_fallback
 
 from llm_decision.logger import log_decision
+
+from interfaces.data_schema import (
+    validate_market_input,
+    validate_model_decision,
+)
 
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -109,6 +115,94 @@ class TestLLMDecisionOffline(unittest.TestCase):
 
     def setUp(self):
         self.market_data = load_market_data()
+
+    def test_market_input_uses_security_codes(self):
+        self.assertTrue(validate_market_input(self.market_data))
+
+        for values in self.market_data["market_features"].values():
+            self.assertEqual(set(values), set(ASSET_VALUES))
+
+        for matrix in self.market_data["asset_correlations"].values():
+            self.assertEqual(set(matrix), set(ASSET_VALUES))
+            for row in matrix.values():
+                self.assertEqual(set(row), set(ASSET_VALUES))
+
+    def test_market_input_rejects_asset_names(self):
+        invalid = copy.deepcopy(self.market_data)
+        values = invalid["market_features"]["asset_return_20d"]
+        values["stock"] = values.pop("510300")
+        self.assertFalse(validate_market_input(invalid))
+
+    def test_market_input_rejects_non_strict_date(self):
+        for invalid_date in (
+            "2026-11-20T16:00:00",
+            "2026-11-20garbage",
+        ):
+            with self.subTest(invalid_date=invalid_date):
+                invalid = copy.deepcopy(self.market_data)
+                invalid["as_of_date"] = invalid_date
+                self.assertFalse(validate_market_input(invalid))
+
+    def test_market_input_accepts_reported_missing_window(self):
+        incomplete = copy.deepcopy(self.market_data)
+        values = incomplete["market_features"][
+            "asset_volatility_250d"
+        ]
+        for code in values:
+            values[code] = None
+
+        incomplete["asset_correlations"]["corr_250d"] = None
+        quality = incomplete["data_quality"]
+        quality["window_status"]["volatility_250d"].update(
+            sufficient=False,
+            reason="insufficient_window",
+        )
+        quality["window_status"]["corr_250d"].update(
+            sufficient=False,
+            reason="insufficient_window",
+        )
+        quality["insufficient_windows"] = [
+            "volatility_250d",
+            "corr_250d",
+        ]
+
+        self.assertTrue(validate_market_input(incomplete))
+
+    def test_market_input_rejects_unreported_null(self):
+        invalid = copy.deepcopy(self.market_data)
+        invalid["asset_correlations"]["corr_60d"][
+            "510300"
+        ]["511010"] = None
+        invalid["asset_correlations"]["corr_60d"][
+            "511010"
+        ]["510300"] = None
+
+        self.assertFalse(validate_market_input(invalid))
+
+    def test_model_input_removes_future_quality_metadata(self):
+        result = build_model_input(self.market_data, "A")
+
+        self.assertNotIn("rows", result["data_quality"])
+        self.assertNotIn("end_date", result["data_quality"])
+        self.assertNotIn("source", result["data_quality"])
+        self.assertEqual(
+            result["data_quality"]["sample_days_to_date"],
+            3236,
+        )
+
+    def test_insufficient_data_decision(self):
+        decision = {
+            **VALID_DECISION,
+            "decision_status": "insufficient_data",
+            "market_state": "uncertain",
+            "confidence": 0,
+            "risk_budget": None,
+        }
+
+        self.assertTrue(validate_model_decision(decision))
+
+        decision["risk_budget"] = RISK_BUDGET
+        self.assertFalse(validate_model_decision(decision))
 
     def test_group_A(self):
         result = build_model_input(
@@ -308,7 +402,10 @@ class TestDeepSeekDecisionPipeline(unittest.TestCase):
         self.assertEqual(request["max_tokens"], 3072)
         self.assertEqual(request["extra_body"], {"thinking": {"type": "disabled"}})
         self.assertFalse(request["stream"])
-        self.assertEqual(json.loads(request["messages"][1]["content"]), self.market_data)
+        self.assertEqual(
+            json.loads(request["messages"][1]["content"]),
+            build_model_input(self.market_data, "A"),
+        )
         self.assertEqual(metadata["model"], "deepseek-flash")
         self.assertEqual(metadata["finish_reason"], "stop")
         self.assertEqual(metadata["attempt"], 1)

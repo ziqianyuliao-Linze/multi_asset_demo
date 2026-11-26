@@ -260,6 +260,20 @@ def build_model_input(
             "Market input validation failed."
         )
 
+    model_input = deepcopy(market_data)
+    quality = model_input["data_quality"]
+    model_input["data_quality"] = {
+        key: quality[key]
+        for key in (
+            "as_of_date",
+            "sample_days_to_date",
+            "no_lookahead",
+            "window_status",
+            "insufficient_windows",
+        )
+        if key in quality
+    }
+
     if group == "A":
 
         if feedback not in (None, {}):
@@ -267,7 +281,7 @@ def build_model_input(
                 "Group A must not receive risk feedback."
             )
 
-        return deepcopy(market_data)
+        return model_input
 
     if feedback is None:
         raise ValueError(
@@ -278,8 +292,6 @@ def build_model_input(
         raise ValueError(
             f"Group {group} risk feedback is invalid."
         )
-
-    model_input = deepcopy(market_data)
 
     model_input["feedback"] = deepcopy(feedback)
 
