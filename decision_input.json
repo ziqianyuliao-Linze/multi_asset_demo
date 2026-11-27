@@ -1,37 +1,122 @@
-
 {
   "as_of_date": "2026-11-20",
-  "experiment_group": "A",
-  "assets": {
-    "510300": {
-      "return_20d": -0.02,
-      "return_60d": 0.03,
-      "volatility_20d_ann": 0.25,
-      "volatility_60d_ann": 0.22,
-      "volatility_250d_ann": 0.21
+  "market_features": {
+    "asset_return_20d": {
+      "510300": -0.02,
+      "511010": 0.005,
+      "518880": 0.015
     },
-    "511010": {
-      "return_20d": 0.005,
-      "return_60d": 0.012,
-      "volatility_20d_ann": 0.025,
-      "volatility_60d_ann": 0.024,
-      "volatility_250d_ann": 0.023
+    "asset_return_60d": {
+      "510300": 0.03,
+      "511010": 0.012,
+      "518880": 0.04
     },
-    "518880": {
-      "return_20d": 0.015,
-      "return_60d": 0.04,
-      "volatility_20d_ann": 0.16,
-      "volatility_60d_ann": 0.17,
-      "volatility_250d_ann": 0.15
+    "asset_volatility_20d": {
+      "510300": 0.25,
+      "511010": 0.025,
+      "518880": 0.16
+    },
+    "asset_volatility_60d": {
+      "510300": 0.22,
+      "511010": 0.024,
+      "518880": 0.17
+    },
+    "asset_volatility_250d": {
+      "510300": 0.21,
+      "511010": 0.023,
+      "518880": 0.15
     }
   },
-  "correlations_60d": {
-    "510300_511010": -0.10,
-    "510300_518880": 0.15,
-    "511010_518880": 0.08
+  "asset_correlations": {
+    "corr_60d": {
+      "510300": {
+        "510300": 1,
+        "511010": -0.1,
+        "518880": 0.15
+      },
+      "511010": {
+        "510300": -0.1,
+        "511010": 1,
+        "518880": 0.08
+      },
+      "518880": {
+        "510300": 0.15,
+        "511010": 0.08,
+        "518880": 1
+      }
+    },
+    "corr_250d": {
+      "510300": {
+        "510300": 1,
+        "511010": -0.05,
+        "518880": 0.12
+      },
+      "511010": {
+        "510300": -0.05,
+        "511010": 1,
+        "518880": 0.06
+      },
+      "518880": {
+        "510300": 0.12,
+        "511010": 0.06,
+        "518880": 1
+      }
+    }
   },
-  "market_data_quality": {
-    "all_required_fields_present": true,
-    "source": "synthetic_test"
+  "data_quality": {
+    "rows": 3236,
+    "start_date": "2013-07-30",
+    "end_date": "2026-11-20",
+    "as_of_date": "2026-11-20",
+    "sample_days_to_date": 3236,
+    "no_lookahead": true,
+    "source": {
+      "file": "synthetic_test"
+    },
+    "window_status": {
+      "return_20d": {
+        "required": 20,
+        "available": 3236,
+        "sufficient": true,
+        "reason": "ok"
+      },
+      "return_60d": {
+        "required": 60,
+        "available": 3236,
+        "sufficient": true,
+        "reason": "ok"
+      },
+      "volatility_20d": {
+        "required": 20,
+        "available": 3236,
+        "sufficient": true,
+        "reason": "ok"
+      },
+      "volatility_60d": {
+        "required": 60,
+        "available": 3236,
+        "sufficient": true,
+        "reason": "ok"
+      },
+      "volatility_250d": {
+        "required": 250,
+        "available": 3236,
+        "sufficient": true,
+        "reason": "ok"
+      },
+      "corr_60d": {
+        "required": 60,
+        "available": 3236,
+        "sufficient": true,
+        "reason": "ok"
+      },
+      "corr_250d": {
+        "required": 250,
+        "available": 3236,
+        "sufficient": true,
+        "reason": "ok"
+      }
+    },
+    "insufficient_windows": []
   }
 }

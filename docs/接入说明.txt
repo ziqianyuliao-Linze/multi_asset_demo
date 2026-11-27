@@ -1,8 +1,8 @@
 1号与4号离线对接
 
-本目录新增 risk_feedback.py、risk_integration.py、test_risk_integration.py。
-运行只依赖 Python 标准库。risk_feedback.py 实现4号计算，risk_integration.py
-复用现有 feature_builder.py 与 offline_test.py 的特征和分组逻辑。
+运行只依赖 Python 标准库。risk_metrics/risk_feedback.py 实现4号计算。
+risk_metrics/risk_integration.py 使用 data_processing/feature_builder.py 生成市场特征，
+并调用 interfaces/risk_decision.py 构建分组输入和校验预算。
 
 真实持仓入口
 提供UTF-8 CSV，列的顺序须严格为
@@ -54,14 +54,17 @@ iters、converged等字段。支持非负预算，0预算资产分配0资金权�
 生成的weight_proposals.json为待回测端执行的提案。执行时点限T+1月首交易日。
 最新数据后没有下一交易日时，日历字段为空，等待回测端提供后续交易日。
 
-真实文件准备好后，在本目录运行
-python -B -E -S risk_integration.py "2：统一口径日收益率矩阵(1).xlsx" --holdings "实际日度持仓.csv" --as-of 2026-11-20 --base-date 2025-11-20
+真实文件准备好后，在项目根目录运行
+python -B -E -S -m risk_metrics.risk_integration data/unified_returns.xlsx --holdings "实际日度持仓.csv" --as-of 2026-11-20 --base-date 2025-11-20
 有四组决策JSON时追加 --decisions "四组决策.json"
-输出保存到risk_runs下的独立run目录，integration_report.json记录输入校验值、
+输出默认保存到risk_metrics/risk_runs下的独立run目录，integration_report.json记录输入校验值、
 计算截止日、反馈审计、结果校验值和API调用状态。成功前不发布完整结果目录。
 
-复验本次离线联调
-python -B -E -S test_risk_integration.py "2：统一口径日收益率矩阵(1).xlsx"
+运行完整测试套件
+python -m unittest discover -s tests -v
+
+单独复验本次离线联调并保存报告
+python -B -E -S -m tests.test_risk_integration data/unified_returns.xlsx
 测试使用真实市场收益和程序生成的测试持仓、模拟模型预算。
 测试持仓按月调整并逐日漂移，四组配置不同，cost_rate取0以隔离计算逻辑。
 独立用例另外核验非零费用、坏输入、缺日、日期截断、负RC及不收敛回退。

@@ -7,11 +7,26 @@ import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 
-from feature_builder import ASSETS, build_features, read_matrix, write_json
-from offline_test import build_group_input, validate_decision
-from risk_feedback import (allocation, build_feedback, check_date, closing_weights,
-                           covariance_at, read_holdings, solve_weights)
+from data_processing.feature_builder import (
+    ASSETS,
+    build_features,
+    read_matrix,
+    write_json,
+)
+from interfaces.risk_decision import (
+    build_group_input,
+    validate_decision,
+)
 
+from risk_metrics.risk_feedback import (
+    allocation,
+    build_feedback,
+    check_date,
+    closing_weights,
+    covariance_at,
+    read_holdings,
+    solve_weights,
+)
 
 def file_hash(path):
     return hashlib.sha256(Path(path).read_bytes()).hexdigest()
