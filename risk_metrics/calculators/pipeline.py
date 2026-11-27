@@ -30,10 +30,34 @@ except ImportError:                     # 脚本方式运行
     import risk_calc as R               # type: ignore[no-redef]
 
 
+def normalize(returns: pd.DataFrame) -> pd.DataFrame:
+    """把 2 号 get_returns_window 的原始输出转成本模块能用的形态。
+
+    - 字符串日期索引 -> DatetimeIndex；
+    - 债券代码列 510300/511010/518880 -> stock/bond/gold；
+    - 已经是对内形态的原样返回。
+    """
+    df = returns.copy()
+
+    if not isinstance(df.index, pd.DatetimeIndex):
+        df.index = pd.to_datetime(pd.Index(df.index))
+    df.index.name = "date"
+    if not df.index.is_monotonic_increasing:
+        df = df.sort_index()
+
+    rename = {code: name for code, name in zip(PB.CODES, PB.NAMES)}
+    df = df.rename(columns=rename)
+    missing = [a for a in C.ASSETS if a not in df.columns]
+    if missing:
+        raise ValueError(f"缺少资产列（需代码或英文名）：{missing}")
+    return df[list(C.ASSETS)].astype(float)
+
+
 def truncate(returns: pd.DataFrame, as_of_date: str) -> pd.DataFrame:
     """按截止日截断，并确认最后一行就是截止日；否则说明数据越界或日期不存在。"""
+    df = normalize(returns)
     as_of = pd.to_datetime(as_of_date)
-    df = returns.loc[returns.index <= as_of]
+    df = df.loc[df.index <= as_of]
     if len(df) == 0:
         raise ValueError(f"截止日 {as_of_date} 之前没有可用数据")
     if pd.Timestamp(df.index[-1]) != as_of:
@@ -120,9 +144,17 @@ def build_facts(returns: pd.DataFrame, weights: Sequence[float], group: str,
     if base is None:
         raise ValueError("D 组需要 base_date（变化归因基准日）")
     base_ts = pd.to_datetime(base)
+    as_of_ts = pd.to_datetime(as_of_date)
+
+    if base_ts >= as_of_ts:
+        raise ValueError(f"基准日 {base} 必须早于截止日 {as_of_date}")
+    if base_ts not in df.index:
+        raise ValueError(f"基准日 {base} 不是收益矩阵中的交易日")
+    if len(df.loc[df.index < base_ts]) < C.Window.COV:
+        raise ValueError(f"基准日 {base} 之前不足 {C.Window.COV} 日观测")
+    if len(df) < C.Window.COV:
+        raise ValueError(f"截止日 {as_of_date} 之前不足 {C.Window.COV} 日观测")
     base_df = df.loc[df.index <= base_ts]
-    if len(base_df) < 3:
-        raise ValueError(f"基准日 {base} 之前数据不足")
 
     w0 = w if prev_weights is None else np.asarray(prev_weights, dtype=float)
     facts.update(

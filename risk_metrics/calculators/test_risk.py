@@ -220,7 +220,7 @@ def test_data_health_flags_nan_and_empty() -> None:
 
 
 # ======================= 三、真实计算链路（内部分装） =======================
-def _sample_returns(n: int = 400, seed: int = 7, drift: float = 0.0003) -> pd.DataFrame:
+def _sample_returns(n: int = 700, seed: int = 7, drift: float = 0.0003) -> pd.DataFrame:
     rng = np.random.default_rng(seed)
     base = rng.normal(drift, 0.01, size=(n, 3))
     base[:, 1] *= 0.1
@@ -251,10 +251,10 @@ W = (1 / 3,) * 3
 BUDGET = (0.5, 0.3, 0.2)
 
 
-def _facts(group: str = "D", n: int = 400) -> tuple:
+def _facts(group: str = "D", n: int = 700) -> tuple:
     df = _sample_returns(n)
     as_of = str(df.index[-1])[:10]
-    base = str(df.index[-200])[:10]
+    base = str(df.index[400])[:10]
     facts = pipeline.build_facts(df, W, group, as_of, base_date=base,
                                  previous_effective_budget=BUDGET)
     return facts, df, as_of, base
@@ -269,9 +269,9 @@ def test_facts_come_from_risk_calc() -> None:
 
 def test_no_lookahead_after_appending_future_rows() -> None:
     """同一 as_of_date，追加未来 200 行，输出必须完全一致。"""
-    df = _sample_returns(400)
+    df = _sample_returns(700)
     as_of = str(df.index[-1])[:10]
-    base = str(df.index[-200])[:10]
+    base = str(df.index[400])[:10]
 
     future = _sample_returns(200, seed=99)
     future.index = pd.date_range(df.index[-1] + pd.Timedelta(days=1), periods=200, freq="B")
@@ -311,12 +311,12 @@ def test_group_b_runs_with_60_days() -> None:
 
 def test_no_drawdown_history_does_not_crash() -> None:
     """净值单调上升、没有回撤区间时，回撤归因应为零贡献而不是报错。"""
-    idx = pd.date_range("2024-01-01", periods=400, freq="B")
+    idx = pd.date_range("2024-01-01", periods=700, freq="B")
     rng = np.random.default_rng(3)
-    rising = np.full((400, 3), 0.002) + rng.normal(0, 0.0001, size=(400, 3))
+    rising = np.full((700, 3), 0.002) + rng.normal(0, 0.0001, size=(700, 3))
     df = pd.DataFrame(rising, index=idx, columns=list(C.ASSETS))
     as_of = str(df.index[-1])[:10]
-    facts = pipeline.build_facts(df, W, "D", as_of, base_date=str(df.index[-200])[:10],
+    facts = pipeline.build_facts(df, W, "D", as_of, base_date=str(df.index[400])[:10],
                                  previous_effective_budget=BUDGET)
     assert facts["drawdown_attribution"]["start"] is None
     assert all(abs(v) < 1e-12 for v in facts["drawdown_attribution"]["contrib"].values())
@@ -380,12 +380,59 @@ def test_end_to_end_into_module1_build_model_input() -> None:
 def test_risk_integration_is_the_single_official_pipeline() -> None:
     """正式入口 risk_integration 只走 risk_feedback.build_feedback，不引 packet_builder。"""
     import inspect
-    import risk_integration
+    from risk_metrics import risk_integration
 
     src = inspect.getsource(risk_integration)
     assert "build_feedback" in src
     assert "packet_builder" not in src
 
+
+
+def test_accepts_module2_window_output() -> None:
+    """兼容 2 号 get_returns_window 的真实输出：字符串日期索引 + 证券代码列。"""
+    df = _sample_returns(700)
+    as_of = str(df.index[-1])[:10]
+    base = str(df.index[400])[:10]
+
+    raw = df.copy()
+    raw.index = pd.Index([d.strftime("%Y-%m-%d") for d in raw.index], name="date")
+    raw.columns = list(PB.CODES)
+
+    facts = pipeline.build_facts(raw, W, "D", as_of, base_date=base,
+                                 previous_effective_budget=BUDGET)
+    expect, _, _, _ = _facts()
+    for a in C.ASSETS:
+        assert abs(facts["risk_contribution"][a] - expect["risk_contribution"][a]) < 1e-12
+
+
+def test_rejects_invalid_base_date() -> None:
+    """基准日必须早于截止日、是真实交易日、前后各至少 250 日。"""
+    df = _sample_returns(700)
+    as_of = str(df.index[-1])[:10]
+    later = str(df.index[500])[:10]
+
+    # 等于截止日
+    expect_error(lambda: pipeline.build_facts(
+        df, W, "D", as_of, base_date=as_of, previous_effective_budget=BUDGET), ValueError)
+    # 晚于截止日
+    expect_error(lambda: pipeline.build_facts(
+        df, W, "D", later, base_date=as_of, previous_effective_budget=BUDGET), ValueError)
+    # 不是交易日
+    expect_error(lambda: pipeline.build_facts(
+        df, W, "D", as_of, base_date="2024-01-06", previous_effective_budget=BUDGET), ValueError)
+    # 基准日之前不足 250 日
+    expect_error(lambda: pipeline.build_facts(
+        df, W, "D", as_of, base_date=str(df.index[10])[:10],
+        previous_effective_budget=BUDGET), ValueError)
+
+
+def test_module_import_path() -> None:
+    """以 risk_metrics.calculators.test_risk 包路径导入时必须成立（不再递归跑子进程）。"""
+    import importlib
+
+    mod = importlib.import_module("risk_metrics.calculators.test_risk")
+    assert hasattr(mod, "run_all")
+    assert mod.__name__ == "risk_metrics.calculators.test_risk"
 
 # ======================= 运行器 =======================
 def run_all() -> int:
