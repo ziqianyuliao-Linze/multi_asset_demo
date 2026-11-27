@@ -33,3 +33,6 @@ tests/input_group_*.json
 tests/feedback_group_*.json
 tests/mock_decision_output.json
 tests/offline_test_report.json
+
+# 集成测试运行产物
+risk_test_runs/

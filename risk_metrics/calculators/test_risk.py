@@ -210,30 +210,79 @@ def test_data_health_flags_nan_and_empty() -> None:
 
 
 # ======================= 三、分组红线 =======================
-def test_packet_field_sets() -> None:
-    meta, facts = PB._demo()
-    p = PB.build_packets(facts, meta)
-    assert set(p["A"]) == {"as_of_date", "data_health"}
-    assert set(p["B"]) - set(p["A"]) == {"portfolio_return"}
-    assert "trigger_flags" in p["C"] and "concentration_state" not in p["C"]
-    assert "risk_contribution" in p["D"]
+def _facts() -> tuple:
+    rng = np.random.default_rng(11)
+    idx = pd.date_range("2024-01-01", periods=300, freq="B")
+    df = pd.DataFrame(rng.normal(0.0002, 0.01, size=(300, 3)), index=idx, columns=list(C.ASSETS))
+    eq = R.equity_curve(df, (1 / 3,) * 3)
+    cov = R.covariance_matrix(df)
+    rc = R.risk_contribution((1 / 3,) * 3, cov)["rc_pct"]
+    ep = R.find_drawdown_episodes(eq, 1)[0]
+    da = R.drawdown_attribution(df, (1 / 3,) * 3, ep["peak_idx"], ep["trough_idx"])
+    facts = {
+        "portfolio_return": {"d20": -0.012, "d60": -0.045},
+        "portfolio_volatility": {"d20": 0.10, "d60": 0.098, "d250": 0.11},
+        "current_drawdown": -0.05, "max_drawdown": -0.09, "cvar_95": 0.018,
+        "trigger_flags": {"drawdown": False, "volatility": True, "correlation": False},
+        "risk_contribution": rc,
+        "budget_deviation": R.budget_deviation(rc, (1 / 3,) * 3),
+        "drawdown_attribution": {"start": da["start"], "end": da["end"],
+                                 "transaction_cost": 0.0, **da["contrib"]},
+        "risk_change_attribution": {"base": idx[100], **{
+            a: {"weight": 0.0, "vol": 0.01, "corr": -0.01, "residual": 0.0} for a in C.ASSETS}},
+        "concentration_state": {**rc, "neff": 1.8},
+    }
+    return facts, {"as_of_date": idx[-1]}
 
 
-def test_packet_no_leak_and_detection() -> None:
-    meta, facts = PB._demo()
-    p = PB.build_packets(facts, meta)
+def test_packet_group_fields() -> None:
+    facts, meta = _facts()
+    assert PB.build_feedback(facts, meta, "A") == {}
+    b = PB.build_feedback(facts, meta, "B")
+    assert set(b) == {"as_of_date", "portfolio_return"}
+    c = PB.build_feedback(facts, meta, "C")
+    assert set(c) - {"as_of_date"} == PB.GROUP_FIELDS["C"]
+    d = PB.build_feedback(facts, meta, "D")
+    assert set(d) - {"as_of_date"} == PB.GROUP_FIELDS["D"]
+
+
+def test_packet_uses_asset_codes() -> None:
+    facts, meta = _facts()
+    d = PB.build_feedback(facts, meta, "D")
+    codes = set(PB.CODES)
+    assert set(d["risk_contribution"]) == codes
+    assert set(d["budget_deviation"]) == codes
+    assert set(d["risk_change_attribution"]) - {"base"} == codes
+    assert set(d["concentration_state"]) - {"neff"} == codes
+    assert set(d["drawdown_attribution"]) - {"start", "end", "transaction_cost"} == codes
+
+
+def test_packet_no_leak() -> None:
+    facts, meta = _facts()
     for g in ("A", "B", "C"):
-        assert not [f for f in PB.D_ONLY_FIELDS if f in p[g]]
-    p["A"]["risk_contribution"] = {"stock": 1.0}
-    expect_error(lambda: PB.assert_no_leak(p), AssertionError)
+        fb = PB.build_feedback(facts, meta, g)
+        assert not (set(fb) & PB.D_ONLY), g
 
 
 def test_packet_missing_fact_and_group() -> None:
-    meta, facts = PB._demo()
+    facts, meta = _facts()
     bad = dict(facts)
     bad.pop("cvar_95")
-    expect_error(lambda: PB.build_packets(bad, meta), KeyError)
-    expect_error(lambda: PB.build_packets(facts, meta, groups=("Z",)), KeyError)
+    expect_error(lambda: PB.build_feedback(bad, meta, "C"), KeyError)
+    expect_error(lambda: PB.build_feedback(facts, meta, "Z"), KeyError)
+
+
+def test_feedback_passes_module1_validator() -> None:
+    """D 组反馈必须能通过 1 号 validate_risk_feedback（缺模块则跳过）。"""
+    try:
+        from llm_decision.validator import validate_risk_feedback
+    except Exception:
+        return
+    facts, meta = _facts()
+    date = str(meta["as_of_date"])[:10]
+    for g in ("A", "B", "C", "D"):
+        fb = PB.build_feedback(facts, meta, g)
+        assert validate_risk_feedback(fb, g, date), g
 
 
 # ======================= 运行器 =======================
