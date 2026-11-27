@@ -1,7 +1,13 @@
 # -*- coding: utf-8 -*-
-"""风险反馈的正式管线：真实 risk_calc 结果 → packet_builder → 1 号 build_model_input。
+"""计算器侧的内部分装逻辑（不是正式入口）。
 
-这是计算器分支唯一的对外入口，不在别处手工拼 facts。
+正式入口是 risk_metrics/risk_integration.py；本文件只服务于 calculators 目录的
+自测与核对，把 risk_calc 的原始结果整理成 packet_builder 需要的形态。
+
+三条硬约束：
+  1. 所有计算先按 as_of_date 截断，末尾必须正好是截止日，绝不看未来数据；
+  2. budget_deviation = RC% − 上一期有效风险预算，绝不用资金权重代替；
+  3. 按组计算：A 不算任何指标，B 只算收益，C 加整体风险，D 才算协方差与归因。
 """
 
 from __future__ import annotations
@@ -24,75 +30,130 @@ except ImportError:                     # 脚本方式运行
     import risk_calc as R               # type: ignore[no-redef]
 
 
-def build_facts(returns: pd.DataFrame, weights: Sequence[float],
-                base_date: str | None = None,
-                prev_weights: Sequence[float] | None = None) -> Dict[str, Any]:
-    """用 risk_calc 的真函数算出反馈所需全部指标。
+def truncate(returns: pd.DataFrame, as_of_date: str) -> pd.DataFrame:
+    """按截止日截断，并确认最后一行就是截止日；否则说明数据越界或日期不存在。"""
+    as_of = pd.to_datetime(as_of_date)
+    df = returns.loc[returns.index <= as_of]
+    if len(df) == 0:
+        raise ValueError(f"截止日 {as_of_date} 之前没有可用数据")
+    if pd.Timestamp(df.index[-1]) != as_of:
+        raise ValueError(
+            f"截止日 {as_of_date} 不是矩阵中的交易日，最后一行是 {df.index[-1]}")
+    return df
 
-    base_date 是变化归因的基准日（D 组必需）；prev_weights 缺省等于 weights。
-    """
-    w = np.asarray(weights, dtype=float)
-    w0 = w if prev_weights is None else np.asarray(prev_weights, dtype=float)
 
-    equity = R.equity_curve(returns, w)
-    dd = R.drawdown_stats(equity)
-    episode = R.find_drawdown_episodes(equity, 1)[0]
-    cov_now = R.covariance_matrix(returns, C.Window.COV)
+def _budget_as_array(prev_budget: Mapping[str, float] | Sequence[float] | None) -> np.ndarray:
+    if prev_budget is None:
+        raise ValueError("budget_deviation 需要上一期有效风险预算 previous_effective_budget")
+    if isinstance(prev_budget, Mapping):
+        return np.array([float(prev_budget[a]) for a in C.ASSETS])
+    b = np.asarray(prev_budget, dtype=float).reshape(-1)
+    if b.size != len(C.ASSETS):
+        raise ValueError(f"预算长度应为 {len(C.ASSETS)}，实际 {b.size}")
+    return b
 
-    if base_date is None:
-        base_date = returns.index[-C.Window.COV * 2]
-    base_ts = pd.to_datetime(base_date)
-    cov_base = R.covariance_matrix(returns.loc[:base_ts], C.Window.COV)
 
-    rc = R.risk_contribution(w, cov_now)
-
+def _empty_drawdown(as_of_date: str) -> Dict[str, Any]:
+    """没有回撤区间时用零贡献代替，避免 IndexError。"""
     return {
-        "portfolio_return": {
-            "d20": R.window_return(returns, w, C.Window.SHORT),
-            "d60": R.window_return(returns, w, C.Window.MID),
-        },
-        "portfolio_volatility": {
-            "d20": R.annualized_volatility(returns, w, C.Window.SHORT),
-            "d60": R.annualized_volatility(returns, w, C.Window.MID),
-        },
-        "current_drawdown": dd["current"],
-        "max_drawdown": dd["max_drawdown"],
-        "cvar_95": R.cvar(returns, w),
-        "trigger_flags": {
-            "drawdown": R.drawdown_alert(equity)["triggered"],
-            "volatility": R.volatility_alert(returns, w)["triggered"],
-            "correlation": R.correlation_alert(returns)["triggered"],
-        },
-        "risk_contribution": rc["rc_pct"],
-        "budget_deviation": R.budget_deviation(rc["rc_pct"], w),
-        "drawdown_attribution": R.drawdown_attribution(
-            returns, w, episode["peak_idx"], episode["trough_idx"]),
-        "change_attribution": R.change_attribution(w0, w, cov_base, cov_now),
-        "concentration": R.concentration(rc["rc_pct"]),
-        "base_date": str(base_ts)[:10],
+        "start": None,
+        "end": as_of_date,
+        "depth": 0.0,
+        "contrib": {a: 0.0 for a in C.ASSETS},
+        "share": {a: 0.0 for a in C.ASSETS},
     }
+
+
+def build_facts(returns: pd.DataFrame, weights: Sequence[float], group: str,
+                as_of_date: str, base_date: str | None = None,
+                previous_effective_budget: Mapping[str, float] | Sequence[float] | None = None,
+                prev_weights: Sequence[float] | None = None) -> Dict[str, Any]:
+    """按组计算指标；只算该组需要的部分。"""
+    if group not in ("A", "B", "C", "D"):
+        raise KeyError(f"未知组别 {group}")
+    if group == "A":
+        return {}
+
+    w = np.asarray(weights, dtype=float)
+    df = truncate(returns, as_of_date)
+
+    facts: Dict[str, Any] = {
+        "portfolio_return": {
+            "d20": R.window_return(df, w, C.Window.SHORT),
+            "d60": R.window_return(df, w, C.Window.MID),
+        }
+    }
+    if group == "B":
+        return facts
+
+    equity = R.equity_curve(df, w)
+    dd = R.drawdown_stats(equity)
+    facts.update(
+        portfolio_volatility={
+            "d20": R.annualized_volatility(df, w, C.Window.SHORT),
+            "d60": R.annualized_volatility(df, w, C.Window.MID),
+        },
+        current_drawdown=dd["current"],
+        max_drawdown=dd["max_drawdown"],
+        cvar_95=R.cvar(df, w),
+        trigger_flags={
+            "drawdown": R.drawdown_alert(equity)["triggered"],
+            "volatility": R.volatility_alert(df, w)["triggered"],
+            "correlation": R.correlation_alert(df)["triggered"],
+        },
+    )
+    if group == "C":
+        return facts
+
+    cov_now = R.covariance_matrix(df, C.Window.COV)
+    rc = R.risk_contribution(w, cov_now)
+    budget = _budget_as_array(previous_effective_budget)
+
+    episodes = R.find_drawdown_episodes(equity, 1)
+    if episodes:
+        ep = episodes[0]
+        attribution = R.drawdown_attribution(df, w, ep["peak_idx"], ep["trough_idx"])
+    else:
+        attribution = _empty_drawdown(as_of_date)
+
+    base = base_date or facts.get("base_date")
+    if base is None:
+        raise ValueError("D 组需要 base_date（变化归因基准日）")
+    base_ts = pd.to_datetime(base)
+    base_df = df.loc[df.index <= base_ts]
+    if len(base_df) < 3:
+        raise ValueError(f"基准日 {base} 之前数据不足")
+
+    w0 = w if prev_weights is None else np.asarray(prev_weights, dtype=float)
+    facts.update(
+        risk_contribution=rc["rc_pct"],
+        budget_deviation={a: float(rc["rc_pct"][a] - budget[i])
+                          for i, a in enumerate(C.ASSETS)},
+        drawdown_attribution=attribution,
+        change_attribution=R.change_attribution(w0, w, R.covariance_matrix(base_df, C.Window.COV), cov_now),
+        concentration=R.concentration(rc["rc_pct"]),
+        base_date=str(base_ts)[:10],
+    )
+    return facts
 
 
 def build_group_feedback(returns: pd.DataFrame, weights: Sequence[float], group: str,
-                         as_of_date: str | None = None,
-                         base_date: str | None = None,
-                         prev_weights: Sequence[float] | None = None) -> Dict[str, Any]:
-    """算指标 → 组装该组反馈。A 组返回空字典。"""
-    meta = {
-        "as_of_date": as_of_date or str(returns.index[-1])[:10],
-        "base_date": base_date,
-    }
-    facts = build_facts(returns, weights, base_date, prev_weights)
+                         as_of_date: str, base_date: str | None = None,
+                         previous_effective_budget=None, prev_weights=None) -> Dict[str, Any]:
+    """算指标并组装该组反馈（内部核对用，不是正式入口）。"""
+    facts = build_facts(returns, weights, group, as_of_date, base_date,
+                        previous_effective_budget, prev_weights)
+    meta = {"as_of_date": as_of_date, "base_date": base_date or facts.get("base_date")}
     return PB.build_feedback(facts, meta, group)
 
 
-def build_group_model_input(returns: pd.DataFrame, weights: Sequence[float], group: str,
-                            market_data: Mapping[str, Any],
-                            as_of_date: str | None = None,
-                            base_date: str | None = None,
-                            prev_weights: Sequence[float] | None = None) -> Dict[str, Any]:
-    """正式入口：返回可直接送给大模型的输入（已通过 1 号校验）。"""
-    feedback = build_group_feedback(returns, weights, group, as_of_date, base_date, prev_weights)
+def build_model_input_for_check(returns: pd.DataFrame, weights: Sequence[float], group: str,
+                                market_data: Mapping[str, Any], as_of_date: str,
+                                base_date: str | None = None,
+                                previous_effective_budget=None, prev_weights=None) -> Dict[str, Any]:
+    """仅用于自测：把结果交给 1 号校验。正式流程仍走 risk_integration。"""
     from llm_decision.validator import build_model_input
 
+    feedback = build_group_feedback(returns, weights, group, as_of_date, base_date,
+                                    previous_effective_budget, prev_weights)
     return build_model_input(dict(market_data), group, feedback)

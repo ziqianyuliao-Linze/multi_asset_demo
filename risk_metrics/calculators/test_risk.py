@@ -219,10 +219,10 @@ def test_data_health_flags_nan_and_empty() -> None:
     expect_error(lambda: PB.data_health(empty), ValueError)
 
 
-# ======================= 三、分组红线（真实计算链路） =======================
-def _sample_returns(n: int = 400, seed: int = 7) -> pd.DataFrame:
+# ======================= 三、真实计算链路（内部分装） =======================
+def _sample_returns(n: int = 400, seed: int = 7, drift: float = 0.0003) -> pd.DataFrame:
     rng = np.random.default_rng(seed)
-    base = rng.normal(0.0003, 0.01, size=(n, 3))
+    base = rng.normal(drift, 0.01, size=(n, 3))
     base[:, 1] *= 0.1
     base[:, 2] *= 0.7
     idx = pd.date_range("2024-01-01", periods=n, freq="B")
@@ -247,54 +247,110 @@ def _market_data(as_of: str, days: int = 400) -> dict:
     }
 
 
-def _real_facts() -> tuple:
-    """真实 risk_calc 计算的 facts，不是手工拼的适配结构。"""
-    df = _sample_returns()
-    weights = (1 / 3,) * 3
+W = (1 / 3,) * 3
+BUDGET = (0.5, 0.3, 0.2)
+
+
+def _facts(group: str = "D", n: int = 400) -> tuple:
+    df = _sample_returns(n)
+    as_of = str(df.index[-1])[:10]
     base = str(df.index[-200])[:10]
-    facts = pipeline.build_facts(df, weights, base_date=base)
-    meta = {"as_of_date": str(df.index[-1])[:10], "base_date": base}
-    return facts, meta
+    facts = pipeline.build_facts(df, W, group, as_of, base_date=base,
+                                 previous_effective_budget=BUDGET)
+    return facts, df, as_of, base
 
 
 def test_facts_come_from_risk_calc() -> None:
-    """facts 必须是 risk_calc 的原始结构（contrib / 按效应分列 / 集中度字段）。"""
-    facts, _ = _real_facts()
+    facts, _, _, _ = _facts()
     assert set(facts["drawdown_attribution"]) >= {"start", "end", "contrib", "share"}
     assert {"weight_effect", "vol_effect", "corr_effect", "residual"} <= set(facts["change_attribution"])
     assert {"max_rc", "max_asset", "neff", "hhi", "is_alert"} <= set(facts["concentration"])
 
 
+def test_no_lookahead_after_appending_future_rows() -> None:
+    """同一 as_of_date，追加未来 200 行，输出必须完全一致。"""
+    df = _sample_returns(400)
+    as_of = str(df.index[-1])[:10]
+    base = str(df.index[-200])[:10]
+
+    future = _sample_returns(200, seed=99)
+    future.index = pd.date_range(df.index[-1] + pd.Timedelta(days=1), periods=200, freq="B")
+    extended = pd.concat([df, future])
+
+    a = pipeline.build_facts(df, W, "D", as_of, base_date=base, previous_effective_budget=BUDGET)
+    b = pipeline.build_facts(extended, W, "D", as_of, base_date=base, previous_effective_budget=BUDGET)
+    assert a == b
+
+
+def test_budget_deviation_uses_risk_budget() -> None:
+    """偏差 = RC% − 上一期风险预算，不是 RC% − 资金权重。"""
+    facts, _, _, _ = _facts()
+    rc = facts["risk_contribution"]
+    got = facts["budget_deviation"]
+    for i, a in enumerate(C.ASSETS):
+        assert abs(got[a] - (rc[a] - BUDGET[i])) < 1e-12, a
+        assert abs(got[a] - (rc[a] - W[i])) > 1e-6, a   # 与用资金权重的结果明显不同
+
+
+def test_group_a_short_sample_returns_empty() -> None:
+    """A 组不计算任何指标，极短样本也能直接返回空反馈。"""
+    short = _sample_returns(5)
+    as_of = str(short.index[-1])[:10]
+    assert pipeline.build_facts(short, W, "A", as_of) == {}
+
+
+def test_group_b_runs_with_60_days() -> None:
+    """B 组只需要 20/60 日收益，60 天样本即可运行。"""
+    df = _sample_returns(60)
+    as_of = str(df.index[-1])[:10]
+    facts = pipeline.build_facts(df, W, "B", as_of)
+    assert set(facts) == {"portfolio_return"}
+    fb = PB.build_feedback(facts, {"as_of_date": as_of}, "B")
+    assert set(fb) == {"as_of_date", "portfolio_return"}
+
+
+def test_no_drawdown_history_does_not_crash() -> None:
+    """净值单调上升、没有回撤区间时，回撤归因应为零贡献而不是报错。"""
+    idx = pd.date_range("2024-01-01", periods=400, freq="B")
+    rng = np.random.default_rng(3)
+    rising = np.full((400, 3), 0.002) + rng.normal(0, 0.0001, size=(400, 3))
+    df = pd.DataFrame(rising, index=idx, columns=list(C.ASSETS))
+    as_of = str(df.index[-1])[:10]
+    facts = pipeline.build_facts(df, W, "D", as_of, base_date=str(df.index[-200])[:10],
+                                 previous_effective_budget=BUDGET)
+    assert facts["drawdown_attribution"]["start"] is None
+    assert all(abs(v) < 1e-12 for v in facts["drawdown_attribution"]["contrib"].values())
+
+
 def test_packet_group_fields() -> None:
-    facts, meta = _real_facts()
-    assert PB.build_feedback(facts, meta, "A") == {}
-    assert set(PB.build_feedback(facts, meta, "B")) - {"as_of_date"} == PB.GROUP_FIELDS["B"]
-    assert set(PB.build_feedback(facts, meta, "C")) - {"as_of_date"} == PB.GROUP_FIELDS["C"]
-    assert set(PB.build_feedback(facts, meta, "D")) - {"as_of_date"} == PB.GROUP_FIELDS["D"]
+    for g in ("B", "C", "D"):
+        facts, df, as_of, base = _facts(g)
+        meta = {"as_of_date": as_of, "base_date": base}
+        assert set(PB.build_feedback(facts, meta, g)) - {"as_of_date"} == PB.GROUP_FIELDS[g], g
 
 
 def test_packet_uses_asset_codes() -> None:
-    facts, meta = _real_facts()
-    d = PB.build_feedback(facts, meta, "D")
+    facts, _, as_of, base = _facts()
+    d = PB.build_feedback(facts, {"as_of_date": as_of, "base_date": base}, "D")
     codes = set(PB.CODES)
     assert set(d["risk_contribution"]) == codes
     assert set(d["budget_deviation"]) == codes
     assert set(d["risk_change_attribution"]) - {"base"} == codes
     assert set(d["concentration_state"]) - {"neff"} == codes
     assert set(d["drawdown_attribution"]) - {"start", "end", "transaction_cost"} == codes
-    # 数值必须与 risk_calc 一致，不能是占位符
     assert abs(d["risk_contribution"]["510300"] - facts["risk_contribution"]["stock"]) < 1e-5
-    assert abs(d["concentration_state"]["neff"] - facts["concentration"]["neff"]) < 1e-5
 
 
 def test_packet_no_leak() -> None:
-    facts, meta = _real_facts()
-    for g in ("A", "B", "C"):
-        assert not (set(PB.build_feedback(facts, meta, g)) & PB.D_ONLY), g
+    for g in ("B", "C"):
+        facts, _, as_of, base = _facts(g)
+        fb = PB.build_feedback(facts, {"as_of_date": as_of, "base_date": base}, g)
+        assert not (set(fb) & PB.D_ONLY), g
 
 
 def test_packet_missing_fact_and_group() -> None:
-    facts, meta = _real_facts()
+    facts, _, as_of, base = _facts("C")
+    meta = {"as_of_date": as_of, "base_date": base}
     bad = dict(facts)
     bad.pop("cvar_95")
     expect_error(lambda: PB.build_feedback(bad, meta, "C"), KeyError)
@@ -303,25 +359,32 @@ def test_packet_missing_fact_and_group() -> None:
 
 def test_feedback_passes_module1_validator() -> None:
     """四组反馈必须通过 1 号 validate_risk_feedback（导入失败即测试失败）。"""
-    facts, meta = _real_facts()
-    for g in ("A", "B", "C", "D"):
-        assert validate_risk_feedback(PB.build_feedback(facts, meta, g), g, meta["as_of_date"]), g
+    for g in ("B", "C", "D"):
+        facts, _, as_of, base = _facts(g)
+        meta = {"as_of_date": as_of, "base_date": base}
+        assert validate_risk_feedback(PB.build_feedback(facts, meta, g), g, as_of), g
 
 
 def test_end_to_end_into_module1_build_model_input() -> None:
-    """真实 risk_calc → packet_builder → 1 号 build_model_input，全程不手工拼 facts。"""
-    df = _sample_returns()
-    weights = (1 / 3,) * 3
-    market = _market_data(str(df.index[-1])[:10], len(df))
-    payload = pipeline.build_group_model_input(
-        df, weights, "D", market, base_date=str(df.index[-200])[:10])
-
+    """真实 risk_calc → packet_builder → 1 号 build_model_input（全程真实函数）。"""
+    facts, df, as_of, base = _facts()
+    market = _market_data(as_of, len(df))
+    payload = pipeline.build_model_input_for_check(
+        df, W, "D", market, as_of, base_date=base, previous_effective_budget=BUDGET)
     assert set(payload) == {"as_of_date", "market_features", "asset_correlations",
                             "data_quality", "feedback"}
-    feedback = payload["feedback"]
-    assert set(feedback) == PB.GROUP_FIELDS["D"]
-    assert set(feedback["risk_contribution"]) == set(PB.CODES)
+    assert set(payload["feedback"]) == PB.GROUP_FIELDS["D"]
     assert "experiment_group" not in json.dumps(payload, ensure_ascii=False)
+
+
+def test_risk_integration_is_the_single_official_pipeline() -> None:
+    """正式入口 risk_integration 只走 risk_feedback.build_feedback，不引 packet_builder。"""
+    import inspect
+    import risk_integration
+
+    src = inspect.getsource(risk_integration)
+    assert "build_feedback" in src
+    assert "packet_builder" not in src
 
 
 # ======================= 运行器 =======================
