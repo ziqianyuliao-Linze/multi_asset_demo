@@ -1,0 +1,118 @@
+{
+  "as_of_date": "2013-12-31",
+  "market_features": {
+    "asset_return_20d": {
+      "510300": -0.04654895666131598,
+      "511010": -8.30858068670004e-05,
+      "518880": -0.014516798009124976
+    },
+    "asset_return_60d": {
+      "510300": -0.05035971223021529,
+      "511010": -0.019432505652537957,
+      "518880": -0.0965779467680612
+    },
+    "asset_volatility_20d": {
+      "510300": 0.15071034870803277,
+      "511010": 0.02116370309368407,
+      "518880": 0.14782642243889801
+    },
+    "asset_volatility_60d": {
+      "510300": 0.1688111268123116,
+      "511010": 0.034286849420556056,
+      "518880": 0.13799908713716633
+    },
+    "asset_volatility_250d": {
+      "510300": null,
+      "511010": null,
+      "518880": null
+    }
+  },
+  "asset_correlations": {
+    "corr_60d": {
+      "510300": {
+        "510300": 1.0,
+        "511010": 0.14534526263834116,
+        "518880": 0.11915568186324006
+      },
+      "511010": {
+        "510300": 0.14534526263834116,
+        "511010": 1.0,
+        "518880": -0.06602272980708332
+      },
+      "518880": {
+        "510300": 0.11915568186324006,
+        "511010": -0.06602272980708332,
+        "518880": 1.0
+      }
+    },
+    "corr_250d": null
+  },
+  "data_quality": {
+    "rows": 3236,
+    "start_date": "2013-07-30",
+    "end_date": "2026-11-20",
+    "asset_order_ok": true,
+    "dates_unique": true,
+    "dates_ascending": true,
+    "no_missing_values": true,
+    "no_infinite_values": true,
+    "common_calendar": true,
+    "no_forward_fill": true,
+    "source": {
+      "file": "data/unified_returns.xlsx",
+      "sheet": "日收益率矩阵",
+      "sha256_12": "c8ae2dad3039"
+    },
+    "as_of_date": "2013-12-31",
+    "sample_days_to_date": 104,
+    "no_lookahead": true,
+    "window_status": {
+      "return_20d": {
+        "required": 20,
+        "available": 104,
+        "sufficient": true,
+        "reason": "ok"
+      },
+      "return_60d": {
+        "required": 60,
+        "available": 104,
+        "sufficient": true,
+        "reason": "ok"
+      },
+      "volatility_20d": {
+        "required": 20,
+        "available": 104,
+        "sufficient": true,
+        "reason": "ok"
+      },
+      "volatility_60d": {
+        "required": 60,
+        "available": 104,
+        "sufficient": true,
+        "reason": "ok"
+      },
+      "volatility_250d": {
+        "required": 250,
+        "available": 104,
+        "sufficient": false,
+        "reason": "insufficient_window"
+      },
+      "corr_60d": {
+        "required": 60,
+        "available": 104,
+        "sufficient": true,
+        "reason": "ok"
+      },
+      "corr_250d": {
+        "required": 250,
+        "available": 104,
+        "sufficient": false,
+        "reason": "insufficient_window"
+      }
+    },
+    "insufficient_windows": [
+      "volatility_250d",
+      "corr_250d"
+    ]
+  }
+}
