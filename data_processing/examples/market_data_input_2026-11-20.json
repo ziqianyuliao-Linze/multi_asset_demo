@@ -1,0 +1,131 @@
+{
+  "as_of_date": "2026-11-20",
+  "market_features": {
+    "asset_return_20d": {
+      "510300": -0.038295835327908256,
+      "511010": 0.0017994148359625761,
+      "518880": -0.11184290767166727
+    },
+    "asset_return_60d": {
+      "510300": -0.13647109391790202,
+      "511010": 0.0056619679868621375,
+      "518880": -0.21139267922893656
+    },
+    "asset_volatility_20d": {
+      "510300": 0.13847913946007753,
+      "511010": 0.009070031834580782,
+      "518880": 0.2803351823147855
+    },
+    "asset_volatility_60d": {
+      "510300": 0.13040378548388662,
+      "511010": 0.006739318169808748,
+      "518880": 0.22963479743406287
+    },
+    "asset_volatility_250d": {
+      "510300": 0.17138163414745042,
+      "511010": 0.007349001972351525,
+      "518880": 0.2961918215337229
+    }
+  },
+  "asset_correlations": {
+    "corr_60d": {
+      "510300": {
+        "510300": 1.0,
+        "511010": 0.011780928533383219,
+        "518880": 0.3919045251708617
+      },
+      "511010": {
+        "510300": 0.011780928533383219,
+        "511010": 1.0,
+        "518880": 0.2007637364440788
+      },
+      "518880": {
+        "510300": 0.3919045251708617,
+        "511010": 0.2007637364440788,
+        "518880": 1.0
+      }
+    },
+    "corr_250d": {
+      "510300": {
+        "510300": 1.0,
+        "511010": -0.009433538482253792,
+        "518880": 0.4698663020825158
+      },
+      "511010": {
+        "510300": -0.009433538482253792,
+        "511010": 1.0,
+        "518880": 0.09875480754143676
+      },
+      "518880": {
+        "510300": 0.4698663020825158,
+        "511010": 0.09875480754143676,
+        "518880": 1.0
+      }
+    }
+  },
+  "data_quality": {
+    "rows": 3236,
+    "start_date": "2013-07-30",
+    "end_date": "2026-11-20",
+    "asset_order_ok": true,
+    "dates_unique": true,
+    "dates_ascending": true,
+    "no_missing_values": true,
+    "no_infinite_values": true,
+    "common_calendar": true,
+    "no_forward_fill": true,
+    "source": {
+      "file": "data/unified_returns.xlsx",
+      "sheet": "日收益率矩阵",
+      "sha256_12": "c8ae2dad3039"
+    },
+    "as_of_date": "2026-11-20",
+    "sample_days_to_date": 3236,
+    "no_lookahead": true,
+    "window_status": {
+      "return_20d": {
+        "required": 20,
+        "available": 3236,
+        "sufficient": true,
+        "reason": "ok"
+      },
+      "return_60d": {
+        "required": 60,
+        "available": 3236,
+        "sufficient": true,
+        "reason": "ok"
+      },
+      "volatility_20d": {
+        "required": 20,
+        "available": 3236,
+        "sufficient": true,
+        "reason": "ok"
+      },
+      "volatility_60d": {
+        "required": 60,
+        "available": 3236,
+        "sufficient": true,
+        "reason": "ok"
+      },
+      "volatility_250d": {
+        "required": 250,
+        "available": 3236,
+        "sufficient": true,
+        "reason": "ok"
+      },
+      "corr_60d": {
+        "required": 60,
+        "available": 3236,
+        "sufficient": true,
+        "reason": "ok"
+      },
+      "corr_250d": {
+        "required": 250,
+        "available": 3236,
+        "sufficient": true,
+        "reason": "ok"
+      }
+    },
+    "insufficient_windows": []
+  }
+}

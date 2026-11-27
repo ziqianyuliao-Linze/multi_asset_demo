@@ -4,9 +4,12 @@ import math
 from datetime import date
 from statistics import mean, stdev
 
-from feature_builder import ASSETS, compound, corr
+from data_processing.feature_builder import (
+    ASSETS,
+    compound,
+    corr,
+)
 
-NAMES = ('stock', 'bond', 'gold')
 HOLDING_COLUMNS = ('as_of_date', 'group') + tuple('w_' + a for a in ASSETS) + tuple(
     'budget_' + a for a in ASSETS) + ('cost_rate',)
 
@@ -259,7 +262,7 @@ def drawdown_attribution(path, records):
         factor = navs[i] / navs[peak_index]
         for j, contribution in enumerate(path['contributions'][i]):
             totals[j] += factor * contribution
-    result = dict(start=start, end=rows[-1]['date'], **dict(zip(NAMES, totals[:3])))
+    result = dict(start=start, end=rows[-1]['date'], **dict(zip(ASSETS, totals[:3])))
     result['transaction_cost'] = totals[3]
     return result
 
@@ -291,9 +294,9 @@ def change_attribution(old_weights, new_weights, old_cov, new_cov, base_date):
     old_rc = risk_contributions(old_weights, old_cov)
     new_rc = risk_contributions(new_weights, new_cov)
     result = {'base': base_date}
-    for i, name in enumerate(NAMES):
-        result[name] = {key: values[i] for key, values in effects.items()}
-        result[name]['residual'] = new_rc[i] - old_rc[i] - sum(values[i] for values in effects.values())
+    for i, code in enumerate(ASSETS):
+        result[code] = {key: values[i] for key, values in effects.items()}
+        result[code]['residual'] = new_rc[i] - old_rc[i] - sum(values[i] for values in effects.values())
     return result
 
 
@@ -352,11 +355,11 @@ def build_feedback(records, history, as_of_date, group, base_date=None):
     cov, shrinkage = covariance_at(market, as_of_date)
     old_cov, old_shrinkage = covariance_at(market, base_date)
     rc = risk_contributions(current_weights, cov)
-    result.update(risk_contribution=dict(zip(NAMES, rc)),
-                  budget_deviation=dict(zip(NAMES, (r - b for r, b in zip(rc, path['rows'][-1]['budget'])))),
+    result.update(risk_contribution=dict(zip(ASSETS, rc)),
+                  budget_deviation=dict(zip(ASSETS, (r - b for r, b in zip(rc, path['rows'][-1]['budget'])))),
                   drawdown_attribution=drawdown_attribution(path, market),
                   risk_change_attribution=change_attribution(old_weights, current_weights, old_cov, cov, base_date),
-                  concentration_state={**dict(zip(NAMES, rc)), 'neff': 1 / sum(r * r for r in rc)})
+                  concentration_state={**dict(zip(ASSETS, rc)), 'neff': 1 / sum(r * r for r in rc)})
     audit.update(current_weights=current_weights, covariance_shrinkage=shrinkage,
                  base_covariance_shrinkage=old_shrinkage)
     return result, audit
