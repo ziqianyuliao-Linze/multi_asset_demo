@@ -13,7 +13,10 @@
 
 from __future__ import annotations
 
+import json
 import math
+import sys
+from pathlib import Path
 from typing import Callable, List, Tuple
 
 import numpy as np
@@ -22,11 +25,18 @@ import pandas as pd
 try:
     from . import config as C
     from . import packet_builder as PB
+    from . import pipeline
     from . import risk_calc as R
 except ImportError:
     import config as C
     import packet_builder as PB
+    import pipeline
     import risk_calc as R
+
+_ROOT = Path(__file__).resolve().parents[2]
+if str(_ROOT) not in sys.path:
+    sys.path.insert(0, str(_ROOT))
+from llm_decision.validator import build_model_input, validate_risk_feedback  # noqa: E402
 
 TOL = dict(rel_tol=1e-9, abs_tol=1e-12)
 
@@ -209,45 +219,62 @@ def test_data_health_flags_nan_and_empty() -> None:
     expect_error(lambda: PB.data_health(empty), ValueError)
 
 
-# ======================= 三、分组红线 =======================
-def _facts() -> tuple:
-    rng = np.random.default_rng(11)
-    idx = pd.date_range("2024-01-01", periods=300, freq="B")
-    df = pd.DataFrame(rng.normal(0.0002, 0.01, size=(300, 3)), index=idx, columns=list(C.ASSETS))
-    eq = R.equity_curve(df, (1 / 3,) * 3)
-    cov = R.covariance_matrix(df)
-    rc = R.risk_contribution((1 / 3,) * 3, cov)["rc_pct"]
-    ep = R.find_drawdown_episodes(eq, 1)[0]
-    da = R.drawdown_attribution(df, (1 / 3,) * 3, ep["peak_idx"], ep["trough_idx"])
-    facts = {
-        "portfolio_return": {"d20": -0.012, "d60": -0.045},
-        "portfolio_volatility": {"d20": 0.10, "d60": 0.098, "d250": 0.11},
-        "current_drawdown": -0.05, "max_drawdown": -0.09, "cvar_95": 0.018,
-        "trigger_flags": {"drawdown": False, "volatility": True, "correlation": False},
-        "risk_contribution": rc,
-        "budget_deviation": R.budget_deviation(rc, (1 / 3,) * 3),
-        "drawdown_attribution": {"start": da["start"], "end": da["end"],
-                                 "transaction_cost": 0.0, **da["contrib"]},
-        "risk_change_attribution": {"base": idx[100], **{
-            a: {"weight": 0.0, "vol": 0.01, "corr": -0.01, "residual": 0.0} for a in C.ASSETS}},
-        "concentration_state": {**rc, "neff": 1.8},
+# ======================= 三、分组红线（真实计算链路） =======================
+def _sample_returns(n: int = 400, seed: int = 7) -> pd.DataFrame:
+    rng = np.random.default_rng(seed)
+    base = rng.normal(0.0003, 0.01, size=(n, 3))
+    base[:, 1] *= 0.1
+    base[:, 2] *= 0.7
+    idx = pd.date_range("2024-01-01", periods=n, freq="B")
+    return pd.DataFrame(base, index=idx, columns=list(C.ASSETS))
+
+
+def _market_data(as_of: str, days: int = 400) -> dict:
+    codes = list(PB.CODES)
+    features = {k: {c: 0.05 for c in codes} for k in
+                ("asset_return_20d", "asset_return_60d", "asset_volatility_20d",
+                 "asset_volatility_60d", "asset_volatility_250d")}
+    corr = {a: {b: (1.0 if a == b else 0.1) for b in codes} for a in codes}
+    status = {k: {"required": 250, "available": days, "sufficient": True, "reason": "ok"}
+              for k in ("return_20d", "return_60d", "volatility_20d", "volatility_60d",
+                        "volatility_250d", "corr_60d", "corr_250d")}
+    return {
+        "as_of_date": as_of,
+        "market_features": features,
+        "asset_correlations": {"corr_60d": corr, "corr_250d": corr},
+        "data_quality": {"window_status": status, "insufficient_windows": [],
+                         "no_lookahead": True, "sample_days_to_date": days},
     }
-    return facts, {"as_of_date": idx[-1]}
+
+
+def _real_facts() -> tuple:
+    """真实 risk_calc 计算的 facts，不是手工拼的适配结构。"""
+    df = _sample_returns()
+    weights = (1 / 3,) * 3
+    base = str(df.index[-200])[:10]
+    facts = pipeline.build_facts(df, weights, base_date=base)
+    meta = {"as_of_date": str(df.index[-1])[:10], "base_date": base}
+    return facts, meta
+
+
+def test_facts_come_from_risk_calc() -> None:
+    """facts 必须是 risk_calc 的原始结构（contrib / 按效应分列 / 集中度字段）。"""
+    facts, _ = _real_facts()
+    assert set(facts["drawdown_attribution"]) >= {"start", "end", "contrib", "share"}
+    assert {"weight_effect", "vol_effect", "corr_effect", "residual"} <= set(facts["change_attribution"])
+    assert {"max_rc", "max_asset", "neff", "hhi", "is_alert"} <= set(facts["concentration"])
 
 
 def test_packet_group_fields() -> None:
-    facts, meta = _facts()
+    facts, meta = _real_facts()
     assert PB.build_feedback(facts, meta, "A") == {}
-    b = PB.build_feedback(facts, meta, "B")
-    assert set(b) == {"as_of_date", "portfolio_return"}
-    c = PB.build_feedback(facts, meta, "C")
-    assert set(c) - {"as_of_date"} == PB.GROUP_FIELDS["C"]
-    d = PB.build_feedback(facts, meta, "D")
-    assert set(d) - {"as_of_date"} == PB.GROUP_FIELDS["D"]
+    assert set(PB.build_feedback(facts, meta, "B")) - {"as_of_date"} == PB.GROUP_FIELDS["B"]
+    assert set(PB.build_feedback(facts, meta, "C")) - {"as_of_date"} == PB.GROUP_FIELDS["C"]
+    assert set(PB.build_feedback(facts, meta, "D")) - {"as_of_date"} == PB.GROUP_FIELDS["D"]
 
 
 def test_packet_uses_asset_codes() -> None:
-    facts, meta = _facts()
+    facts, meta = _real_facts()
     d = PB.build_feedback(facts, meta, "D")
     codes = set(PB.CODES)
     assert set(d["risk_contribution"]) == codes
@@ -255,17 +282,19 @@ def test_packet_uses_asset_codes() -> None:
     assert set(d["risk_change_attribution"]) - {"base"} == codes
     assert set(d["concentration_state"]) - {"neff"} == codes
     assert set(d["drawdown_attribution"]) - {"start", "end", "transaction_cost"} == codes
+    # 数值必须与 risk_calc 一致，不能是占位符
+    assert abs(d["risk_contribution"]["510300"] - facts["risk_contribution"]["stock"]) < 1e-5
+    assert abs(d["concentration_state"]["neff"] - facts["concentration"]["neff"]) < 1e-5
 
 
 def test_packet_no_leak() -> None:
-    facts, meta = _facts()
+    facts, meta = _real_facts()
     for g in ("A", "B", "C"):
-        fb = PB.build_feedback(facts, meta, g)
-        assert not (set(fb) & PB.D_ONLY), g
+        assert not (set(PB.build_feedback(facts, meta, g)) & PB.D_ONLY), g
 
 
 def test_packet_missing_fact_and_group() -> None:
-    facts, meta = _facts()
+    facts, meta = _real_facts()
     bad = dict(facts)
     bad.pop("cvar_95")
     expect_error(lambda: PB.build_feedback(bad, meta, "C"), KeyError)
@@ -273,16 +302,26 @@ def test_packet_missing_fact_and_group() -> None:
 
 
 def test_feedback_passes_module1_validator() -> None:
-    """D 组反馈必须能通过 1 号 validate_risk_feedback（缺模块则跳过）。"""
-    try:
-        from llm_decision.validator import validate_risk_feedback
-    except Exception:
-        return
-    facts, meta = _facts()
-    date = str(meta["as_of_date"])[:10]
+    """四组反馈必须通过 1 号 validate_risk_feedback（导入失败即测试失败）。"""
+    facts, meta = _real_facts()
     for g in ("A", "B", "C", "D"):
-        fb = PB.build_feedback(facts, meta, g)
-        assert validate_risk_feedback(fb, g, date), g
+        assert validate_risk_feedback(PB.build_feedback(facts, meta, g), g, meta["as_of_date"]), g
+
+
+def test_end_to_end_into_module1_build_model_input() -> None:
+    """真实 risk_calc → packet_builder → 1 号 build_model_input，全程不手工拼 facts。"""
+    df = _sample_returns()
+    weights = (1 / 3,) * 3
+    market = _market_data(str(df.index[-1])[:10], len(df))
+    payload = pipeline.build_group_model_input(
+        df, weights, "D", market, base_date=str(df.index[-200])[:10])
+
+    assert set(payload) == {"as_of_date", "market_features", "asset_correlations",
+                            "data_quality", "feedback"}
+    feedback = payload["feedback"]
+    assert set(feedback) == PB.GROUP_FIELDS["D"]
+    assert set(feedback["risk_contribution"]) == set(PB.CODES)
+    assert "experiment_group" not in json.dumps(payload, ensure_ascii=False)
 
 
 # ======================= 运行器 =======================

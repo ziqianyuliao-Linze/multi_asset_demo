@@ -1,32 +1,33 @@
 # -*- coding: utf-8 -*-
-"""风险反馈分拣：把计算器结果组装成 1 号 build_model_input 能直接吃的结构。
+"""风险反馈分拣：把 risk_calc 的真实输出组装成 1 号 build_model_input 能直接吃的结构。
 
-口径以 interfaces/data_schema.py 与 llm_decision/validator.py 为准：
-  A 组反馈为空；
-  B 组只有组合收益；
-  C 组加波动、回撤、CVaR 与三个预警；
-  D 组再加风险贡献、预算偏差、回撤归因、变化归因、集中度。
-资产键一律用证券代码（510300/511010/518880），转换由 key_map 完成。
+数据来源就是 risk_calc 的原始返回值，不做二次加工：
+  drawdown_attribution       -> {start, end, depth, contrib{stock,bond,gold}, share}
+  change_attribution         -> {weight_effect{...}, vol_effect{...}, corr_effect{...}, residual{...}}
+  concentration              -> {max_rc, max_asset, neff, hhi, is_alert}
+  risk_contribution          -> {rc_pct{stock,bond,gold}, ...}
+
+对外仍按 1 号口径输出证券代码键。
 """
 
 from __future__ import annotations
 
+import sys
+from pathlib import Path
 from typing import Any, Dict, Mapping
 
-try:
+try:                                    # 作为 risk_metrics.calculators 包的一部分导入
+    from .. import key_map
     from . import config as C
-    from . import key_map
-except ImportError:                      # 直接当脚本运行时
-    import config as C
-    import sys
-    from pathlib import Path
+except ImportError:                     # 直接以脚本方式运行同目录文件时
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-    import key_map
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    import key_map                      # type: ignore[no-redef]
+    import config as C                  # type: ignore[no-redef]
 
 CODES = key_map.CODES
 NAMES = key_map.NAMES
 
-# 每组的字段集合，和 1 号 validator.GROUP_FEEDBACK_FIELDS 保持一致
 GROUP_FIELDS: Dict[str, set] = {
     "A": set(),
     "B": {"portfolio_return"},
@@ -57,17 +58,63 @@ def _round(obj: Any, digits: int = 6) -> Any:
         return {k: _round(v, digits) for k, v in obj.items()}
     if isinstance(obj, list):
         return [_round(v, digits) for v in obj]
-    if isinstance(obj, bool):
+    if isinstance(obj, bool) or obj is None:
         return obj
     if isinstance(obj, (int, float)):
         return round(float(obj), digits)
     return obj
 
 
-def build_feedback(facts: Mapping[str, Any], meta: Mapping[str, Any], group: str) -> Dict[str, Any]:
-    """按组组装反馈。返回的字典可直接传给 build_model_input(..., feedback=...)。
+def _drawdown_attribution(da: Mapping[str, Any]) -> Dict[str, Any]:
+    """读 risk_calc.drawdown_attribution 的真实结构（资产数值在 contrib 里）。"""
+    contrib = da.get("contrib")
+    if not isinstance(contrib, Mapping):
+        raise KeyError("drawdown_attribution 缺少 contrib，需传 risk_calc 的原始输出")
+    return {
+        "start": str(da["start"])[:10] if da.get("start") else None,
+        "end": str(da["end"])[:10],
+        "transaction_cost": float(da.get("transaction_cost", 0.0)),
+        **{key_map.NAME_TO_CODE[n]: float(contrib[n]) for n in NAMES},
+    }
 
-    facts 是 risk_calc 的输出（内部用 stock/bond/gold），这里统一转成证券代码。
+
+def _change_attribution(ch: Mapping[str, Any], base: str) -> Dict[str, Any]:
+    """读 risk_calc.change_attribution 的真实结构（按效应分列）。"""
+    need = ("weight_effect", "vol_effect", "corr_effect", "residual")
+    missing = [k for k in need if not isinstance(ch.get(k), Mapping)]
+    if missing:
+        raise KeyError(f"change_attribution 缺少 {missing}，需传 risk_calc 的原始输出")
+    effects = ch.get("effects", {})
+    return {
+        "base": str(base)[:10],
+        **{
+            key_map.NAME_TO_CODE[n]: {
+                "weight": float(ch["weight_effect"].get(n, effects.get("weight", {}).get(n, 0.0))),
+                "vol": float(ch["vol_effect"].get(n, effects.get("vol", {}).get(n, 0.0))),
+                "corr": float(ch["corr_effect"].get(n, effects.get("corr", {}).get(n, 0.0))),
+                "residual": float(ch["residual"].get(n, 0.0)),
+            }
+            for n in NAMES
+        },
+    }
+
+
+def _concentration_state(conc: Mapping[str, Any], rc_pct: Mapping[str, float]) -> Dict[str, Any]:
+    """concentration 本身不含逐资产 RC，逐资产值取 risk_contribution 的 rc_pct。"""
+    return {
+        **{key_map.NAME_TO_CODE[n]: float(rc_pct[n]) for n in NAMES},
+        "neff": float(conc["neff"]),
+    }
+
+
+def build_feedback(facts: Mapping[str, Any], meta: Mapping[str, Any], group: str) -> Dict[str, Any]:
+    """按组组装反馈，输入是 risk_calc 的原始输出字典。
+
+    facts 需要包含：
+      portfolio_return, portfolio_volatility, current_drawdown, max_drawdown,
+      cvar_95, trigger_flags, risk_contribution(rc_pct), budget_deviation,
+      drawdown_attribution, change_attribution, concentration
+    meta 需要包含 as_of_date，D 组还需要 base_date。
     """
     if group not in GROUP_FIELDS:
         raise KeyError(f"未知组别 {group}，可选：{list(GROUP_FIELDS)}")
@@ -104,41 +151,23 @@ def build_feedback(facts: Mapping[str, Any], meta: Mapping[str, Any], group: str
     if group == "C":
         return _assert_fields(feedback, group)
 
-    dd_attr = facts["drawdown_attribution"]
-    change = facts["risk_change_attribution"]
-    conc = facts["concentration_state"]
+    rc_pct = facts["risk_contribution"]
+    base = meta.get("base_date") or facts.get("base_date")
+    if base is None:
+        raise KeyError("D 组需要 meta['base_date']（变化归因的基准日）")
 
     feedback.update(
-        risk_contribution=_by_code(facts["risk_contribution"]),
+        risk_contribution=_by_code(rc_pct),
         budget_deviation=_by_code(facts["budget_deviation"]),
-        drawdown_attribution={
-            "start": (str(dd_attr["start"])[:10] if dd_attr.get("start") else None),
-            "end": str(dd_attr["end"])[:10],
-            "transaction_cost": float(dd_attr.get("transaction_cost", 0.0)),
-            **{code: float(dd_attr[name]) for name, code in zip(NAMES, CODES)},
-        },
-        risk_change_attribution={
-            "base": str(change["base"])[:10],
-            **{
-                code: {
-                    "weight": float(change[name]["weight"]),
-                    "vol": float(change[name]["vol"]),
-                    "corr": float(change[name]["corr"]),
-                    "residual": float(change[name].get("residual", 0.0)),
-                }
-                for name, code in zip(NAMES, CODES)
-            },
-        },
-        concentration_state={
-            **{code: float(conc[name]) for name, code in zip(NAMES, CODES)},
-            "neff": float(conc["neff"]),
-        },
+        drawdown_attribution=_drawdown_attribution(facts["drawdown_attribution"]),
+        risk_change_attribution=_change_attribution(facts["change_attribution"], base),
+        concentration_state=_concentration_state(facts["concentration"], rc_pct),
     )
     return _assert_fields(feedback, group)
 
 
 def _assert_fields(feedback: Mapping[str, Any], group: str) -> Dict[str, Any]:
-    """红线：字段集合必须恰好等于该组允许的集合，D 字段不得出现在 A/B/C。"""
+    """字段集合必须恰好等于该组允许集合，D 字段不得出现在 A/B/C。"""
     fields = set(feedback) - {"as_of_date"}
     if group in ("A", "B", "C"):
         leaked = fields & D_ONLY
@@ -154,15 +183,14 @@ def _assert_fields(feedback: Mapping[str, Any], group: str) -> Dict[str, Any]:
 
 def to_model_input(market_data: Mapping[str, Any], facts: Mapping[str, Any],
                    meta: Mapping[str, Any], group: str) -> Dict[str, Any]:
-    """组装并交给 1 号校验：返回可直接喂给模型的输入。"""
-    from llm_decision.validator import build_model_input   # 延迟导入，避免循环依赖
+    """正式入口：risk_calc 结果 → 反馈 → 1 号 build_model_input。"""
+    from llm_decision.validator import build_model_input
 
-    feedback = build_feedback(facts, meta, group)
-    return build_model_input(dict(market_data), group, feedback)
+    return build_model_input(dict(market_data), group, build_feedback(facts, meta, group))
 
 
 def data_health(returns, as_of: str | None = None) -> Dict[str, Any]:
-    """数据体检（属于市场输入侧，不进入风险反馈字段）。"""
+    """数据体检（市场输入侧，不进入风险反馈字段）。"""
     import pandas as pd
 
     if len(returns) == 0:
