@@ -46,7 +46,7 @@ python -m baseline_strategies.portfolio_optimizer --as-of 2026-11-20 --strategy 
 # 2) 直接运行本文件（文件底部自测入口，默认同日同策略）
 python baseline_strategies/portfolio_optimizer.py
 
-# 3) 单元测试（50 个用例）
+# 3) 单元测试（57 个用例）
 python -m pytest tests/test_baseline_strategies.py -v
 ```
 
@@ -82,18 +82,23 @@ print(result["risk_contribution_ratio"])       # 三项均约 0.3333
 
 ## 六、异常约定
 - `ValueError`：资产池非法、协方差非 3×3/不对称/NaN/方差非正、零矩阵、策略名非法、日期非法、窗口不足；
-- `RiskBudgetError`（`RuntimeError` 子类）：风险平价求解返回 success 但风险贡献偏差 > 0.005，**不返回权重**；
-- `RuntimeError`：优化器无可行解。
+- `RiskBudgetError`（`RuntimeError` 子类）：最终风险贡献偏差 > 0.005，**不返回权重**；
+- `RuntimeError`：凸障碍解与 inverse-vol/均权精修全部不可用（候选权重非有限）。
+
+求解器容错说明：`L-BFGS-B`/`BFGS` 在平缓方向上常因线搜索精度断言返回
+`precision loss` / `ABNORMAL`（状态标记非 success），但候选解本身已收敛。
+`_risk_budget_barrier` 因此**只要候选权重有限就保留**，不因状态标记失败而阻断流程；
+是否可用统一由后验风险贡献偏差（≤ 0.005）裁决。
 
 ## 七、与队长 6 条整改的对应关系
 
 | 整改要求 | 实现位置 | 单元测试 |
 | --- | --- | --- |
-| 1 风险平价后验校验，偏差容差 0.005，超限抛异常 | `_risk_budget_barrier`（凸对数障碍）+ `_refine_risk_budget`（精修）+ `check_risk_budget` + `RiskBudgetError` | `TestRiskBudgetGate` |
+| 1 风险平价后验校验，偏差容差 0.005，超限抛异常 | `_risk_budget_barrier`（凸对数障碍，非 success 但候选有限时保留）+ `_refine_risk_budget`（精修，inverse-vol/均权兜底起点）+ `check_risk_budget` + `RiskBudgetError` | `TestRiskBudgetGate`、`TestWindow250D::test_risk_parity_regression_20241231` |
 | 2 资产池强校验、协方差严格 3×3 | `validate_asset_pool`、`validate_covariance` | `TestAssetPool`、`TestCovarianceGuard::test_shape_must_be_3x3` |
 | 3 零/奇异/非正定矩阵防护，防除零 | `stabilize_covariance`（收缩修复）、`compute_risk_contribution`（方差<=0 即拒绝） | `TestCovarianceGuard` |
 | 4 250 日窗口正式入口，协方差在本模块算 | `run_baseline_250d`、`fetch_returns_window_250d`、`compute_sample_covariance` | `TestWindow250D` |
-| 5 新增单元测试（难解矩阵、后验误差、资产池异常、零/奇异矩阵、窗口不足、未来日期、截断） | — | 50 个用例全覆盖 |
+| 5 新增单元测试（难解矩阵、后验误差、资产池异常、零/奇异矩阵、窗口不足、未来日期、截断、求解器精度断言回归） | — | 57 个用例全覆盖 |
 | 6 清理冗余：删未用导入、删不可达分支、修正不存在的 `get_rolling_cov` 注释 | `portfolio_optimizer.py` 顶部与分发函数 | 全量测试回归通过 |
 
 ## 八、实测结果（as_of_date = 2026-11-20，250 日窗口）

@@ -36,6 +36,11 @@ needs_matrix = pytest.mark.skipif(not HAS_PANDAS, reason="需要 pandas/openpyxl
 
 REAL_AS_OF = "2026-11-20"  # 冻结矩阵末日，与 2 号数据模块 TEST_REPORT 一致
 
+# 全样本 147 个月末信号日中，求解器（L-BFGS-B/BFGS）会返回非 success 的 6 个日期：
+# 凸问题在平缓方向上触发线搜索精度断言，但候选解有限且后验偏差已达标，必须照常产出。
+PRECISION_LOSS_DATES = ["2015-10-30", "2022-06-30", "2024-08-30",
+                        "2024-12-31", "2025-05-30", "2025-06-30"]
+
 # 常规（良态、正定）协方差：日频量纲，三资产波动率约 2%、0.2%、1.7%，条件数约 123
 CALM_COV = np.outer(np.array([0.020, 0.002, 0.017]), np.array([0.020, 0.002, 0.017])) * np.array([
     [1.00, 0.25, 0.30],
@@ -336,6 +341,29 @@ class TestWindow250D:
         assert np.max(np.abs(recomputed - np.full(N_ASSETS, 1.0 / 3.0))) <= RC_TOLERANCE
         np.testing.assert_allclose(ratio_of(result), recomputed, atol=1e-10)
         assert result["covariance_shrinkage"]["shrunk"] == shrinkage["shrunk"]
+
+    def test_risk_parity_regression_20241231(self):
+        """队长指定回归用例：该日期 L-BFGS-B/BFGS 均返回 precision loss，
+        但候选解有限且后验偏差达标，必须正常返回而不是抛 RuntimeError。"""
+        result = run_baseline_250d("2024-12-31", "risk_parity")
+
+        weights = weights_of(result)
+        ratio = ratio_of(result)
+        assert np.isclose(np.sum(weights), 1.0)
+        assert np.all(weights >= 0)
+        assert np.isclose(np.sum(ratio), 1.0)
+        assert np.max(np.abs(ratio - np.full(N_ASSETS, 1.0 / 3.0))) <= RC_TOLERANCE
+        assert result["risk_budget_pass"] is True
+        assert result["sample_days"] == WINDOW_DAYS
+
+    @pytest.mark.parametrize("as_of", PRECISION_LOSS_DATES)
+    def test_risk_parity_precision_loss_dates(self, as_of):
+        """全样本扫描发现 147 个月末日中有 6 个会触发求解器精度断言，
+        这些日期都必须正常产出且后验偏差达标。"""
+        result = run_baseline_250d(as_of, "risk_parity")
+        ratio = ratio_of(result)
+        assert np.max(np.abs(ratio - np.full(N_ASSETS, 1.0 / 3.0))) <= RC_TOLERANCE
+        assert np.isclose(np.sum(weights_of(result)), 1.0)
 
     def test_insufficient_history_raises(self):
         # 2013-08-30 仅有 24 个共同交易日，凑不满 250 日窗口

@@ -188,10 +188,15 @@ def _normalize_cov(cov: np.ndarray) -> tuple[np.ndarray, float]:
     return cov / scale, scale
 
 
-def _risk_budget_barrier(cov: np.ndarray, budget: np.ndarray) -> np.ndarray:
+def _risk_budget_barrier(cov: np.ndarray, budget: np.ndarray) -> np.ndarray | None:
     """Spinu 对数障碍凸形式求解风险预算：min 0.5·y'Σy - Σb_i·ln(y_i)，y>0。
 
     对数障碍形式是凸问题，解唯一；归一化协方差后 L-BFGS-B 为主，BFGS 兜底。
+
+    注意：优化器状态标记失败（如 "precision loss" / "ABNORMAL"）不等于解不可用——
+    凸问题在平缓方向上常因线搜索精度断言而返回非 success，但候选解本身已收敛。
+    因此这里只要候选解有限就收集，取后验偏差最小者返回；全部不可用才返回 None，
+    由上层继续用 inverse-vol / 均权初值精修，最终能否采用由风险贡献后验容差裁决。
     """
     normalized, _ = _normalize_cov(cov)
     vol = np.sqrt(np.diag(normalized))
@@ -212,15 +217,29 @@ def _risk_budget_barrier(cov: np.ndarray, budget: np.ndarray) -> np.ndarray:
          [(-30.0, 30.0)] * normalized.shape[0]),
         ("BFGS", {"gtol": 1e-10, "maxiter": 2000}, None),
     )
-    last_message = ""
+    candidates = []
     for method, options, bounds in attempts:
         result = minimize(objective, theta0, jac=gradient, method=method,
                           bounds=bounds, options=options)
-        if result.success and np.all(np.isfinite(result.x)):
-            y = np.exp(result.x)
-            return y / y.sum()
-        last_message = str(result.message)
-    raise RuntimeError(f"风险预算求解失败：{last_message}")
+        if not np.all(np.isfinite(result.x)):
+            continue
+        y = np.exp(result.x)
+        if not np.all(np.isfinite(y)) or y.sum() <= 0:
+            continue
+        candidates.append(y / y.sum())
+        if result.success:  # 已收敛，无需再换算法重试
+            break
+
+    if not candidates:
+        return None
+
+    best, best_deviation = None, np.inf
+    for w in candidates:
+        rc = w * (cov @ w)
+        deviation = float(np.max(np.abs(rc / rc.sum() - budget)))
+        if np.isfinite(deviation) and deviation < best_deviation:
+            best, best_deviation = w, deviation
+    return best
 
 
 def _refine_risk_budget(cov: np.ndarray, budget: np.ndarray, weight0) -> np.ndarray:
@@ -242,15 +261,24 @@ def _refine_risk_budget(cov: np.ndarray, budget: np.ndarray, weight0) -> np.ndar
 
 
 def _solve_risk_budget(cov: np.ndarray, budget=None) -> np.ndarray:
-    """稳定求解风险预算权重：凸障碍求解 + 多起点精修，取后验偏差最小者。"""
+    """稳定求解风险预算权重：凸障碍求解 + 多起点精修，取后验偏差最小者。
+
+    barrier 只在候选解全部不可用（NaN/Inf）时返回 None；此时仍用 inverse-vol 与均权初值精修，
+    只要精修后风险贡献偏差达标就可采用，是否达标由 ``risk_parity`` 的后验校验裁决。
+    """
     target = np.full(N_ASSETS, 1.0 / N_ASSETS) if budget is None else np.asarray(budget, float)
     barrier_weight = _risk_budget_barrier(cov, target)
 
     vol = np.sqrt(np.diag(cov))
     inverse_vol = target / vol
     inverse_vol = inverse_vol / inverse_vol.sum()
-    starts = [barrier_weight, inverse_vol, np.full(N_ASSETS, 1.0 / N_ASSETS)]
-    candidates = [barrier_weight]
+    equal = np.full(N_ASSETS, 1.0 / N_ASSETS)
+
+    starts = [inverse_vol, equal]
+    candidates = []
+    if barrier_weight is not None:
+        starts.insert(0, barrier_weight)  # 优先从凸解出发精修
+        candidates.append(barrier_weight)
     for start in starts:
         try:
             candidates.append(_refine_risk_budget(cov, target, start))
@@ -268,7 +296,7 @@ def _solve_risk_budget(cov: np.ndarray, budget=None) -> np.ndarray:
         if np.isfinite(deviation) and deviation < best_deviation:
             best, best_deviation = w, deviation
     if best is None:
-        raise RuntimeError("风险预算求解未得到可行权重")
+        raise RuntimeError("风险预算求解未得到可行权重：凸障碍解与 inverse-vol/均权精修均不可用")
     return best
 
 
